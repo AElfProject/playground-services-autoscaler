@@ -2,7 +2,7 @@
 using System.IO.Compression;
 using StackExchange.Redis;
 
-var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumer";
+var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
 var operation = Environment.GetEnvironmentVariable("OPERATION") ?? "build";
 var streamName = Environment.GetEnvironmentVariable("STREAM_NAME") ?? $"{operation}stream";
