@@ -79,7 +79,7 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
 
             if (dict["id"] == key)
             {
-                await db.StreamAcknowledgeAsync(streamName, consumerGroupName, current.Id);
+                await db.StreamAcknowledgeAsync(resultStreamName, consumerGroupName, current.Id);
 
                 try
                 {
@@ -100,6 +100,9 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
         }
         await Task.Delay(1000);
     }
+
+    // since there is a timeout, acknowledge the original message to avoid reprocessing
+    await db.StreamAcknowledgeAsync(streamName, consumerGroupName, messageId);
 
     return "Timeout";
 }
