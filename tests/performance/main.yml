@@ -1,0 +1,15 @@
+config:
+  http:
+    timeout: 120000
+  target: "https://redis-job-runner.test.aelf.dev"
+  phases:
+    - duration: 10
+      arrivalRate: 1
+      name: up to 10 user
+scenarios:
+  - flow:
+      - post:
+          url: "/build"
+          formData:
+            file:
+              fromFile: "./Archive.zip"
