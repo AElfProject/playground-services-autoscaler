@@ -1,0 +1,13 @@
+FROM mcr.microsoft.com/dotnet/sdk:6.0 AS base
+
+FROM base AS build
+WORKDIR /app
+COPY ./Consumer .
+RUN dotnet publish -c Release -o out
+
+FROM base AS final
+WORKDIR /app
+COPY --from=mcr.microsoft.com/dotnet/sdk:8.0 /usr/share/dotnet /usr/share/dotnet
+COPY --from=build /app/out .
+ENV DOTNET_CLI_USE_MSBUILD_SERVER=1
+ENTRYPOINT ["dotnet", "Consumer.dll"]
