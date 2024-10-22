@@ -203,5 +203,23 @@ static void PrintDirectoryTree(string dirPath, string indent, bool isLast)
     }
 }
 
+async Task Init()
+{
+    await InitStream(streamName, consumerGroupName);
+    await InitStream(resultStreamName, consumerGroupName);
+}
+
+async Task InitStream(string streamName, string groupName)
+{
+    if (!await db.KeyExistsAsync(streamName) ||
+    (await db.StreamGroupInfoAsync(streamName)).All(x => x.Name != groupName))
+    {
+        await db.StreamCreateConsumerGroupAsync(streamName, groupName, "0-0", true);
+    }
+}
+
+// initialize the stream
+await Init();
+
 // run the task
 await consumerGroupReadTask;
