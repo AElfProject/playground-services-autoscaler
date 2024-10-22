@@ -23,7 +23,6 @@ var consumerGroupReadTask = Task.Run(async () =>
         {
             await db.StreamAcknowledgeAsync(streamName, consumerGroupName, id);
             id = string.Empty;
-            break; // add a break here to process one message and exit for scaled jobs
         }
         // read the next result from the stream
         var result = await db.StreamReadGroupAsync(streamName, consumerGroupName, consumerName, ">", 1);
