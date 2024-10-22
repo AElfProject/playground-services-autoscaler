@@ -44,11 +44,11 @@ app.MapPost("/test", async (IFormFile file) =>
 
 app.Run();
 
-await Init();
-
 // reusable code for the above two endpoints
 async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile file, string resultStreamName)
 {
+    await Init();
+
     string key = Guid.NewGuid().ToString();
 
     // convert file to byte array
