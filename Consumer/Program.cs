@@ -81,7 +81,7 @@ async Task<string> ProcessBuild(string file)
             StartInfo = new ProcessStartInfo
             {
                 FileName = "dotnet",
-                Arguments = $"build {csprojFile}",
+                Arguments = $"build {csprojFile} -p:RunAnalyzers=false",
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
