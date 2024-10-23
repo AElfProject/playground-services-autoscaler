@@ -221,5 +221,28 @@ async Task InitStream(string streamName, string groupName)
 // initialize the stream
 await Init();
 
+async Task PopulateNugetCache()
+{
+    // run dotnet tool install AElf.ContractTemplates
+    var process = Process.Start("dotnet", "tool install AElf.ContractTemplates -g");
+    await process.WaitForExitAsync();
+
+    // run dotnet new aelf -n HelloWorld
+    process = Process.Start("dotnet", "new aelf -n HelloWorld");
+    await process.WaitForExitAsync();
+
+    // run dotnet restore
+    process = Process.Start("dotnet", "restore");
+    await process.WaitForExitAsync();
+
+    // find the location of the nuget cache
+    var nugetCache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
+
+    // print the directory tree
+    PrintDirectoryTree(nugetCache, "", true);
+}
+
+await PopulateNugetCache();
+
 // run the task
 await consumerGroupReadTask;

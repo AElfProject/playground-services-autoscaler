@@ -42,8 +42,6 @@ app.MapPost("/test", async (IFormFile file) =>
 })
 .DisableAntiforgery();
 
-await PopulateNugetCache();
-
 app.Run();
 
 // reusable code for the above two endpoints
@@ -124,53 +122,5 @@ async Task InitStream(string streamName, string groupName)
     (await db.StreamGroupInfoAsync(streamName)).All(x => x.Name != groupName))
     {
         await db.StreamCreateConsumerGroupAsync(streamName, groupName, "0-0", true);
-    }
-}
-
-async Task PopulateNugetCache()
-{
-    // run dotnet tool install AElf.ContractTemplates
-    var process = Process.Start("dotnet", "tool install AElf.ContractTemplates -g");
-    await process.WaitForExitAsync();
-
-    // run dotnet new aelf -n HelloWorld
-    process = Process.Start("dotnet", "new aelf -n HelloWorld");
-    await process.WaitForExitAsync();
-
-    // run dotnet restore
-    process = Process.Start("dotnet", "restore");
-    await process.WaitForExitAsync();
-
-    // find the location of the nuget cache
-    var nugetCache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
-
-    // print the directory tree
-    PrintDirectoryTree(nugetCache, "", true);
-}
-
-static void PrintDirectoryTree(string dirPath, string indent, bool isLast)
-{
-    // Print the current directory
-    Console.WriteLine($"{indent}+- {Path.GetFileName(dirPath)}");
-
-    // Update the indentation for subdirectories
-    indent += isLast ? "   " : "|  ";
-
-    // Get all subdirectories and files
-    var subDirs = Directory.GetDirectories(dirPath);
-    var files = Directory.GetFiles(dirPath);
-
-    // Loop through each subdirectory
-    for (int i = 0; i < subDirs.Length; i++)
-    {
-        bool isLastDir = (i == subDirs.Length - 1) && (files.Length == 0);
-        PrintDirectoryTree(subDirs[i], indent, isLastDir);
-    }
-
-    // Loop through each file
-    for (int i = 0; i < files.Length; i++)
-    {
-        bool isLastFile = i == files.Length - 1;
-        Console.WriteLine($"{indent}+- {Path.GetFileName(files[i])}");
     }
 }
