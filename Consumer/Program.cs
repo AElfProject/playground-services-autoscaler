@@ -223,6 +223,8 @@ await Init();
 
 async Task PopulateNugetCache()
 {
+    // measure the time taken
+    var timer = Stopwatch.StartNew();
     // run dotnet tool install AElf.ContractTemplates
     var process = Process.Start("dotnet", "new --install AElf.ContractTemplates");
     await process.WaitForExitAsync();
@@ -240,6 +242,8 @@ async Task PopulateNugetCache()
 
     // print the directory tree
     PrintDirectoryTree(nugetCache, "", true);
+
+    Console.WriteLine($"Populated nuget cache in {timer.ElapsedMilliseconds}ms");
 }
 
 await PopulateNugetCache();
