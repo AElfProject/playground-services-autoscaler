@@ -3,9 +3,9 @@ config:
     timeout: 120000
   target: "https://redis-job-runner.test.aelf.dev"
   phases:
-    - duration: 10
+    - duration: 100
       arrivalRate: 1
-      name: up to 10 user
+      name: up to 100 user
 scenarios:
   - flow:
       - post:
