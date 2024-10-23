@@ -223,6 +223,13 @@ await Init();
 
 async Task PopulateNugetCache()
 {
+    // check if the cache is already populated
+    var nugetCache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
+    if (Directory.Exists(nugetCache))
+    {
+        return;
+    }
+
     // measure the time taken
     var timer = Stopwatch.StartNew();
     // run dotnet tool install AElf.ContractTemplates
@@ -236,9 +243,6 @@ async Task PopulateNugetCache()
     // run dotnet restore
     process = Process.Start("dotnet", "restore test");
     await process.WaitForExitAsync();
-
-    // find the location of the nuget cache
-    var nugetCache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
 
     // print the directory tree
     PrintDirectoryTree(nugetCache, "", true);
