@@ -224,7 +224,7 @@ await Init();
 async Task PopulateNugetCache()
 {
     // run dotnet tool install AElf.ContractTemplates
-    var process = Process.Start("dotnet", "tool install AElf.ContractTemplates -g");
+    var process = Process.Start("dotnet", "new --install AElf.ContractTemplates");
     await process.WaitForExitAsync();
 
     // run dotnet new aelf -n HelloWorld
