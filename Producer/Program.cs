@@ -63,8 +63,7 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
     var fileBase64 = Convert.ToBase64String(fileBytes);
 
     // Adding a message to the stream
-    var messageId = await db.StreamAddAsync(streamName,
-    [new("id", key), new("file", fileBase64)]);
+    var messageId = await db.StreamAddAsync(streamName, [new("id", key), new("file", fileBase64)], "*", 100);
 
     var timer = Stopwatch.StartNew();
 

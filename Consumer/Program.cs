@@ -36,12 +36,12 @@ var consumerGroupReadTask = Task.Run(async () =>
             {
                 var message = await ProcessOperation(file, operation);
 
-                await db.StreamAddAsync(resultStreamName, [new("id", dict["id"]), new("message", message)]);
+                await db.StreamAddAsync(resultStreamName, [new("id", dict["id"]), new("message", message)], "*", 100);
             }
             catch (Exception ex)
             {
                 // problem processing file
-                await db.StreamAddAsync(resultStreamName, [new("id", dict["id"]), new("error", ex.Message)]);
+                await db.StreamAddAsync(resultStreamName, [new("id", dict["id"]), new("error", ex.Message)], "*", 100);
             }
         }
         await Task.Delay(1000);
