@@ -232,7 +232,7 @@ async Task PopulateNugetCache()
     await process.WaitForExitAsync();
 
     // run dotnet restore
-    process = Process.Start("dotnet", "restore");
+    process = Process.Start("dotnet", "restore test");
     await process.WaitForExitAsync();
 
     // find the location of the nuget cache
