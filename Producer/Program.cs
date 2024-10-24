@@ -126,6 +126,9 @@ async Task Init()
 
 async Task InitStream(string streamName, string groupName)
 {
-    await db.StreamDeleteConsumerGroupAsync(streamName, groupName);
-    await db.StreamCreateConsumerGroupAsync(streamName, groupName, "0");
+    if (!await db.KeyExistsAsync(streamName) ||
+    (await db.StreamGroupInfoAsync(streamName)).All(x => x.Name != groupName))
+    {
+        await db.StreamCreateConsumerGroupAsync(streamName, groupName, "0-0", true);
+    }
 }
