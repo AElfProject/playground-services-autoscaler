@@ -100,7 +100,7 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
             }
 
             // if the message we are looking for is processed, return the result
-            if (dict["id"] == key)
+            if (allResults.ContainsKey(key))
             {
                 return allResults[key];
             }
