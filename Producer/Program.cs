@@ -27,6 +27,8 @@ var timeout = int.Parse(Environment.GetEnvironmentVariable("TIMEOUT") ?? "10000"
 var redis = ConnectionMultiplexer.Connect(redisConnectionString);
 IDatabase db = redis.GetDatabase();
 
+var allResults = new Dictionary<string, string>();
+
 // post formdata file upload to Redis stream
 app.MapPost("/build", async (IFormFile file) =>
 {
@@ -72,33 +74,35 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
 
     while (timer.ElapsedMilliseconds < timeout)
     {
-        // read the result with same id as the message above, where the id is inside the message itself
-        var result = await db.StreamReadGroupAsync(resultStreamName, consumerGroupName, consumer, ">", 1);
+        var result = await db.StreamReadGroupAsync(resultStreamName, consumerGroupName, consumer, "0", 1);
         if (result.Any())
         {
             var current = result.First();
             var dict = ParseResult(current);
 
-            if (dict["id"] == key)
-            {
-                await db.StreamAcknowledgeAsync(resultStreamName, consumerGroupName, current.Id);
-                Console.WriteLine($"Message with id {key} processed in {timer.ElapsedMilliseconds}ms");
+            await db.StreamAcknowledgeAsync(resultStreamName, consumerGroupName, current.Id);
+            Console.WriteLine($"Message with id {key} processed in {timer.ElapsedMilliseconds}ms");
 
+            try
+            {
+                allResults[key] = dict["message"];
+            }
+            catch (Exception)
+            {
                 try
                 {
-                    return dict["message"];
+                    allResults[key] = dict["error"];
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    try
-                    {
-                        return dict["error"];
-                    }
-                    catch (Exception ex)
-                    {
-                        return ex.Message;
-                    }
+                    allResults[key] = ex.Message;
                 }
+            }
+
+            // if the message we are looking for is processed, return the result
+            if (dict["id"] == key)
+            {
+                return allResults[key];
             }
         }
         await Task.Delay(1000);
