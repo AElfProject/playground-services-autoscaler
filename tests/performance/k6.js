@@ -2,7 +2,7 @@ import http from "k6/http";
 import { sleep, check } from "k6";
 
 export const options = {
-  vus: 5, // Number of virtual users to simulate
+  vus: 20, // Number of virtual users to simulate
   iterations: 100, // Total number of script iterations across all VUs
 };
 
@@ -17,7 +17,7 @@ export default function () {
   };
 
   // Send the POST request with the multipart/form-data payload
-  const res = http.post(url, payload);
+  const res = http.post(url, payload, { timeout: "120s" });
 
   // Validate response
   check(res, {
