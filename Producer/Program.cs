@@ -64,13 +64,16 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
 
     // Adding a message to the stream
     var messageId = await db.StreamAddAsync(streamName, [new("id", key), new("file", fileBase64)], "*", 100);
+    Console.WriteLine($"Message added to stream {streamName} with id {messageId}");
 
     var timer = Stopwatch.StartNew();
+
+    var consumer = Guid.NewGuid().ToString();
 
     while (timer.ElapsedMilliseconds < timeout)
     {
         // read the result with same id as the message above, where the id is inside the message itself
-        var result = await db.StreamReadGroupAsync(resultStreamName, consumerGroupName, Guid.NewGuid().ToString(), ">", 1);
+        var result = await db.StreamReadGroupAsync(resultStreamName, consumerGroupName, consumer, ">", 1);
         if (result.Any())
         {
             var current = result.First();
@@ -79,6 +82,7 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
             if (dict["id"] == key)
             {
                 await db.StreamAcknowledgeAsync(resultStreamName, consumerGroupName, current.Id);
+                Console.WriteLine($"Message with id {key} processed in {timer.ElapsedMilliseconds}ms");
 
                 try
                 {
