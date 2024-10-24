@@ -132,3 +132,20 @@ async Task InitStream(string streamName, string groupName)
         await db.StreamCreateConsumerGroupAsync(streamName, groupName, "0-0", true);
     }
 }
+
+async Task TrimStream(string streamName)
+{
+    var Expiry = TimeSpan.FromMinutes(3);
+    await db.ExecuteAsync("XTRIM", streamName, "MINID", "~", DateTimeOffset.UtcNow.Subtract(Expiry).ToUnixTimeMilliseconds());
+}
+
+// trim the stream every 3 mins
+await Task.Run(async () =>
+{
+    while (true)
+    {
+        await Task.Delay(1000 * 60 * 3);
+        await TrimStream(buildStreamName);
+        await TrimStream(testStreamName);
+    }
+});
