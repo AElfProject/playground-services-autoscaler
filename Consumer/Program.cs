@@ -153,9 +153,9 @@ async Task<string> ProcessTest(string file)
 
 Task<(string, string)> ExtractZipFile(string file)
 {
-    var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+    var tempPath = Path.GetTempPath();
     var fileBytes = Convert.FromBase64String(file);
-    var zipPath = Path.Combine(tempPath, Guid.NewGuid().ToString());
+    var zipPath = Path.Combine(tempPath, "extracted");
     // extract the zip file
     Directory.CreateDirectory(tempPath);
     File.WriteAllBytes(zipPath, fileBytes);
