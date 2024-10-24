@@ -65,8 +65,13 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
     var fileBase64 = Convert.ToBase64String(fileBytes);
 
     // Adding a message to the stream
-    var messageId = await db.StreamAddAsync(streamName, [new("id", key), new("file", fileBase64)], "*", 100);
-    Console.WriteLine($"Message added to stream {streamName} with id {key}");
+    // var messageId = await db.StreamAddAsync(streamName, [new("id", key), new("file", fileBase64)], "*", 100);
+
+    // https://github.com/StackExchange/StackExchange.Redis/issues/1718#issuecomment-1219592426
+    var Expiry = TimeSpan.FromMinutes(3);
+    var add = await db.ExecuteAsync("XADD", streamName, "MINID", "=", DateTimeOffset.UtcNow.Subtract(Expiry).ToUnixTimeMilliseconds(), "*", "id", key, "file", fileBase64);
+    var msgId = add.ToString();
+    Console.WriteLine($"Message added to stream {streamName} with id {key} as {msgId}");
 
     var timer = Stopwatch.StartNew();
 
@@ -109,7 +114,7 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
     }
 
     // since there is a timeout, acknowledge the original message to avoid reprocessing
-    await db.StreamAcknowledgeAsync(streamName, consumerGroupName, messageId);
+    // await db.StreamAcknowledgeAsync(streamName, consumerGroupName, messageId);
 
     return "Timeout";
 }
@@ -132,20 +137,3 @@ async Task InitStream(string streamName, string groupName)
         await db.StreamCreateConsumerGroupAsync(streamName, groupName, "0-0", true);
     }
 }
-
-async Task TrimStream(string streamName)
-{
-    var Expiry = TimeSpan.FromMinutes(3);
-    await db.ExecuteAsync("XTRIM", streamName, "MINID", "~", DateTimeOffset.UtcNow.Subtract(Expiry).ToUnixTimeMilliseconds());
-}
-
-// trim the stream every 3 mins
-await Task.Run(async () =>
-{
-    while (true)
-    {
-        await Task.Delay(1000 * 60 * 3);
-        await TrimStream(buildStreamName);
-        await TrimStream(testStreamName);
-    }
-});
