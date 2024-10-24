@@ -70,7 +70,7 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
     while (timer.ElapsedMilliseconds < timeout)
     {
         // read the result with same id as the message above, where the id is inside the message itself
-        var result = await db.StreamReadGroupAsync(resultStreamName, consumerGroupName, "consumer", ">", 1);
+        var result = await db.StreamReadGroupAsync(resultStreamName, consumerGroupName, Guid.NewGuid().ToString(), ">", 1);
         if (result.Any())
         {
             var current = result.First();
