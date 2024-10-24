@@ -81,7 +81,6 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
             var dict = ParseResult(current);
 
             await db.StreamAcknowledgeAsync(resultStreamName, consumerGroupName, current.Id);
-            Console.WriteLine($"Message with id {key} processed in {timer.ElapsedMilliseconds}ms");
 
             try
             {
@@ -102,6 +101,7 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
             // if the message we are looking for is processed, return the result
             if (allResults.TryGetValue(key, out string? value))
             {
+                Console.WriteLine($"Message with id {key} processed in {timer.ElapsedMilliseconds}ms");
                 return value;
             }
         }
