@@ -26,22 +26,26 @@ var consumerGroupReadTask = Task.Run(async () =>
         }
         // read the next result from the stream
         var result = await db.StreamReadGroupAsync(streamName, consumerGroupName, consumerName, ">", 1);
-        if (result.Any())
+        if (result.Length != 0)
         {
             id = result.FirstOrDefault().Id.ToString() ?? string.Empty;
             var dict = ParseResult(result.First());
-            var file = dict["file"];
 
-            try
+            if (dict.ContainsKey("file"))
             {
-                var message = await ProcessOperation(file, operation);
+                var file = dict["file"];
 
-                await db.StreamAddAsync(resultStreamName, [new("id", dict["id"]), new("message", message)], "*", 100);
-            }
-            catch (Exception ex)
-            {
-                // problem processing file
-                await db.StreamAddAsync(resultStreamName, [new("id", dict["id"]), new("error", ex.Message)], "*", 100);
+                try
+                {
+                    var message = await ProcessOperation(file, operation);
+
+                    await db.StreamAddAsync(resultStreamName, [new("id", dict["id"]), new("message", message)], "*", 100);
+                }
+                catch (Exception ex)
+                {
+                    // problem processing file
+                    await db.StreamAddAsync(resultStreamName, [new("id", dict["id"]), new("error", ex.Message)], "*", 100);
+                }
             }
         }
         await Task.Delay(1000);
@@ -153,7 +157,7 @@ async Task<string> ProcessTest(string file)
 
 Task<(string, string)> ExtractZipFile(string file)
 {
-    var tempPath = Path.GetTempPath();
+    var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
     var fileBytes = Convert.FromBase64String(file);
     var zipPath = Path.Combine(tempPath, "extracted");
     // extract the zip file
