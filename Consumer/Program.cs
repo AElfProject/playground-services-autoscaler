@@ -8,7 +8,7 @@ using System.Text;
 
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
-var operation = Environment.GetEnvironmentVariable("OPERATION") ?? "build";
+var operation = Environment.GetEnvironmentVariable("OPERATION") ?? "template";
 var streamName = Environment.GetEnvironmentVariable("STREAM_NAME") ?? $"{operation}stream";
 var minioBucketName = Environment.GetEnvironmentVariable("MINIO_BUCKET_NAME") ?? "your-bucket-name";
 var minioAccessKey = Environment.GetEnvironmentVariable("MINIO_ACCESS_KEY") ?? "your-access-key";

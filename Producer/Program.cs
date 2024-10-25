@@ -46,7 +46,10 @@ app.MapPost("/build", async (IFormFile file, MinioUploader minioUploader) =>
         var payload = JsonSerializer.Serialize(new { command = "build" });
         var result = await SendToRedis(buildStreamName, key, payload);
 
-        return Results.Ok(result);
+        using var reader = new StreamReader(result, Encoding.UTF8);
+        var content = await reader.ReadToEndAsync();
+
+        return Results.Ok(content);
     }
     catch (Exception ex)
     {
@@ -63,7 +66,11 @@ app.MapPost("/test", async (IFormFile file, MinioUploader minioUploader) =>
         await minioUploader.UploadFileFromIFormFileAsync(file, key);
         var payload = JsonSerializer.Serialize(new { command = "test" });
         var result = await SendToRedis(testStreamName, key, payload);
-        return Results.Ok(result);
+
+        using var reader = new StreamReader(result, Encoding.UTF8);
+        var content = await reader.ReadToEndAsync();
+
+        return Results.Ok(content);
     }
     catch (Exception ex)
     {
@@ -82,7 +89,8 @@ app.MapGet("/template", async (string template, string templateName) =>
     var payload = JsonSerializer.Serialize(new { command = "template", template, templateName });
     var key = $"{template}-{templateName}";
     var result = await SendToRedis(templateStreamName, key, payload);
-    return Results.Ok(result);
+
+    return Results.File(result, "application/octet-stream", key + ".zip");
 });
 
 app.MapGet("/share/get", async (string key, MinioUploader minioUploader) =>
@@ -148,10 +156,9 @@ async Task<Stream> SendToRedis(string streamName, string key, string payload)
         }
         catch (Exception)
         {
+            await Task.Delay(1000);
             continue;
         }
-
-        await Task.Delay(1000);
     }
 
     // create a timeout response
