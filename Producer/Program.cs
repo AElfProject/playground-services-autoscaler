@@ -1,7 +1,7 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Common;
-using Microsoft.Extensions.Caching.Distributed;
 using StackExchange.Redis;
 
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
@@ -10,7 +10,10 @@ var buildStreamName = Environment.GetEnvironmentVariable("BUILD_STREAM_NAME") ??
 var testStreamName = Environment.GetEnvironmentVariable("TEST_STREAM_NAME") ?? "teststream";
 var templateStreamName = Environment.GetEnvironmentVariable("TEMPLATE_STREAM_NAME") ?? "templatestream";
 var timeout = int.Parse(Environment.GetEnvironmentVariable("TIMEOUT") ?? "10000");
-var shareCacheExpiry = int.Parse(Environment.GetEnvironmentVariable("SHARE_CACHE_EXPIRY") ?? "300");
+var minioBucketName = Environment.GetEnvironmentVariable("MINIO_BUCKET_NAME") ?? "your-bucket-name";
+var minioAccessKey = Environment.GetEnvironmentVariable("MINIO_ACCESS_KEY") ?? "your-access-key";
+var minioSecretKey = Environment.GetEnvironmentVariable("MINIO_SECRET_KEY") ?? "your-secret-key";
+var minioServiceURL = Environment.GetEnvironmentVariable("MINIO_SERVICE_URL") ?? "http://localhost:9000";
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,14 +22,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Configure Redis
-builder.Services.AddStackExchangeRedisCache(options =>
-{
-    options.Configuration = redisConnectionString; // Update if your Redis server is different
-});
-
-// Register the RedisCacheService from the Common library
-builder.Services.AddScoped<IRedisCacheService, RedisCacheService>();
+builder.Services.AddSingleton(provider =>
+    new MinioUploader(minioBucketName, minioAccessKey, minioSecretKey, minioServiceURL));
 
 var app = builder.Build();
 
@@ -40,21 +37,38 @@ var redis = ConnectionMultiplexer.Connect(redisConnectionString);
 IDatabase db = redis.GetDatabase();
 
 // post formdata file upload to Redis stream
-app.MapPost("/build", async (IFormFile file, IRedisCacheService cacheService) =>
+app.MapPost("/build", async (IFormFile file, MinioUploader minioUploader) =>
 {
-    var payload = await PrepareFile(file);
-    var key = Guid.NewGuid().ToString();
-    var result = await SendToRedisAndWatchForResults(buildStreamName, key, payload, cacheService);
-    return Results.Ok(result);
+    try
+    {
+        var key = Guid.NewGuid().ToString();
+        await minioUploader.UploadFileFromIFormFileAsync(file, key);
+        var payload = JsonSerializer.Serialize(new { command = "build" });
+        var result = await SendToRedis(buildStreamName, key, payload);
+
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Internal server error: {ex.Message}");
+    }
 })
 .DisableAntiforgery();
 
-app.MapPost("/test", async (IFormFile file, IRedisCacheService cacheService) =>
+app.MapPost("/test", async (IFormFile file, MinioUploader minioUploader) =>
 {
-    var payload = await PrepareFile(file);
-    var key = Guid.NewGuid().ToString();
-    var result = await SendToRedisAndWatchForResults(testStreamName, key, payload, cacheService);
-    return Results.Ok(result);
+    try
+    {
+        var key = Guid.NewGuid().ToString();
+        await minioUploader.UploadFileFromIFormFileAsync(file, key);
+        var payload = JsonSerializer.Serialize(new { command = "test" });
+        var result = await SendToRedis(testStreamName, key, payload);
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Internal server error: {ex.Message}");
+    }
 })
 .DisableAntiforgery();
 
@@ -63,106 +77,77 @@ app.MapGet("/templates", () =>
     return new List<string> { "aelf", "aelf-lottery", "aelf-nft-sale", "aelf-simple-dao" };
 });
 
-app.MapGet("/template", async (string template, string templateName, IRedisCacheService cacheService) =>
+app.MapGet("/template", async (string template, string templateName) =>
 {
-    var payload = JsonSerializer.Serialize(new { template, templateName });
+    var payload = JsonSerializer.Serialize(new { command = "template", template, templateName });
     var key = $"{template}-{templateName}";
-    var result = await SendToRedisAndWatchForResults(templateStreamName, key, payload, cacheService);
+    var result = await SendToRedis(templateStreamName, key, payload);
     return Results.Ok(result);
 });
 
-app.MapGet("/share/get", async (string id, IRedisCacheService cacheService) =>
+app.MapGet("/share/get", async (string key, MinioUploader minioUploader) =>
 {
-    var result = await cacheService.GetCachedDataAsync<string>(id);
-
-    // if no result, return not found
-    if (string.IsNullOrEmpty(result))
+    if (string.IsNullOrWhiteSpace(key))
     {
-        return Results.NotFound();
+        return Results.BadRequest("File key is required.");
     }
 
-    var obj = JsonSerializer.Deserialize<Dictionary<string, string>>(result);
-
-    if (obj == null)
+    try
     {
-        return Results.NotFound();
+        var stream = await minioUploader.DownloadFileAsync(key);
+        return Results.File(stream, "application/octet-stream", key + ".zip");
     }
-
-    var file = Convert.FromBase64String(obj["file"]);
-    return Results.File(new MemoryStream(file), "application/octet-stream", "contract.zip");
+    catch (Exception ex)
+    {
+        return Results.Problem($"Internal server error: {ex.Message}");
+    }
 });
 
-app.MapPost("/share/create", async (IFormFile file, IRedisCacheService cacheService) =>
+app.MapPost("/share/create", async (IFormFile file, MinioUploader minioUploader) =>
 {
-    var id = Guid.NewGuid().ToString();
-
-    var payload = await PrepareFile(file);
-
-    await cacheService.SetCacheDataAsync(id, payload, new DistributedCacheEntryOptions
+    try
     {
-        AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(shareCacheExpiry)
-    });
-
-    return id;
+        var key = Guid.NewGuid().ToString();
+        await minioUploader.UploadFileFromIFormFileAsync(file, key);
+        return Results.Ok(key);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Internal server error: {ex.Message}");
+    }
 })
 .DisableAntiforgery();
 
 app.Run();
 
-Task<string> PrepareFile(IFormFile file)
-{
-    // convert file to byte array
-    byte[] fileBytes;
-    using (var ms = new MemoryStream())
-    {
-        file.CopyTo(ms);
-        fileBytes = ms.ToArray();
-    }
-
-    var payload = JsonSerializer.Serialize(new { file = Convert.ToBase64String(fileBytes) });
-
-    // convert file to base64 string
-    return Task.FromResult(payload);
-}
-
-// reusable code for the above two endpoints
-async Task<string> SendToRedisAndWatchForResults(string streamName, string key, string payload, IRedisCacheService cacheService)
+async Task<Stream> SendToRedis(string streamName, string key, string payload)
 {
     await Init();
 
-    // check the cache first
-    var cachedData = await cacheService.GetCachedDataAsync<string>(key);
-    if (!string.IsNullOrEmpty(cachedData))
-    {
-        Console.WriteLine($"Message with id {key} returned from cache");
-        return cachedData;
-    }
-
     // https://github.com/StackExchange/StackExchange.Redis/issues/1718#issuecomment-1219592426
     var Expiry = TimeSpan.FromMinutes(3);
-    var add = await db.ExecuteAsync("XADD", streamName, "MINID", "=", DateTimeOffset.UtcNow.Subtract(Expiry).ToUnixTimeMilliseconds(), "*", "id", key, "payload", payload);
+    var add = await db.ExecuteAsync("XADD", streamName, "MINID", "=", DateTimeOffset.UtcNow.Subtract(Expiry).ToUnixTimeMilliseconds(), "*", "key", key, "payload", payload);
     var msgId = add.ToString();
-    Console.WriteLine($"Message added to stream {streamName} with id {key} as {msgId}");
+    Console.WriteLine($"Message added to stream {streamName} with key {key} as {msgId}");
 
-    var timer = Stopwatch.StartNew();
+    // check minio for the result
+    var sw = Stopwatch.StartNew();
 
-    var consumer = Guid.NewGuid().ToString();
-
-    while (timer.ElapsedMilliseconds < timeout)
+    // get minio required service
+    var minioUploader = app.Services.GetRequiredService<MinioUploader>();
+    // check the key from minio
+    while (sw.ElapsedMilliseconds < timeout)
     {
-        var cachedResponse = await cacheService.GetCachedDataAsync<string>(key);
-
-        if (string.IsNullOrEmpty(cachedResponse))
+        var stream = await minioUploader.DownloadFileAsync(key + "_result");
+        if (stream != null)
         {
-            await Task.Delay(1000);
-            continue;
+            return stream;
         }
-
-        Console.WriteLine($"Message with id {key} processed in {timer.ElapsedMilliseconds}ms");
-        return cachedResponse;
+        await Task.Delay(1000);
     }
 
-    return "Timeout";
+    // create a timeout response
+    return new MemoryStream(Encoding.UTF8.GetBytes("Timeout"));
 }
 
 async Task Init()

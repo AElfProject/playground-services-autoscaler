@@ -3,25 +3,23 @@ using System.IO.Compression;
 using StackExchange.Redis;
 using Common;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Caching.Distributed;
 using System.Text.Json;
+using System.Text;
 
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
-var operation = Environment.GetEnvironmentVariable("OPERATION") ?? "template";
+var operation = Environment.GetEnvironmentVariable("OPERATION") ?? "build";
 var streamName = Environment.GetEnvironmentVariable("STREAM_NAME") ?? $"{operation}stream";
-var cacheExpiry = int.Parse(Environment.GetEnvironmentVariable("CACHE_EXPIRY") ?? "60");
+var minioBucketName = Environment.GetEnvironmentVariable("MINIO_BUCKET_NAME") ?? "your-bucket-name";
+var minioAccessKey = Environment.GetEnvironmentVariable("MINIO_ACCESS_KEY") ?? "your-access-key";
+var minioSecretKey = Environment.GetEnvironmentVariable("MINIO_SECRET_KEY") ?? "your-secret-key";
+var minioServiceURL = Environment.GetEnvironmentVariable("MINIO_SERVICE_URL") ?? "http://localhost:9000";
 
 void ConfigureServices(IServiceCollection services)
 {
-    // Configure Redis
-    services.AddStackExchangeRedisCache(options =>
-    {
-        options.Configuration = redisConnectionString; // Update if your Redis server is different
-    });
-
-    // Add RedisCacheService
-    services.AddScoped<IRedisCacheService, RedisCacheService>();
+    // Add MinioUploader
+    services.AddSingleton<MinioUploader>(provider =>
+        new MinioUploader(minioBucketName, minioAccessKey, minioSecretKey, minioServiceURL));
 }
 
 // Setup dependency injection
@@ -30,8 +28,8 @@ ConfigureServices(serviceCollection);
 
 var serviceProvider = serviceCollection.BuildServiceProvider();
 
-// Use the RedisCacheService
-var cacheService = serviceProvider.GetRequiredService<IRedisCacheService>();
+// Use the MinioUploader
+var minioUploader = serviceProvider.GetRequiredService<MinioUploader>();
 
 var redis = ConnectionMultiplexer.Connect(redisConnectionString);
 IDatabase db = redis.GetDatabase();
@@ -55,44 +53,60 @@ var consumerGroupReadTask = Task.Run(async () =>
         {
             id = result.FirstOrDefault().Id.ToString() ?? string.Empty;
             var dict = ParseResult(result.First());
-
-            if (dict.ContainsKey("payload"))
+            var key = string.Empty;
+            if (dict.TryGetValue("key", out var k))
             {
-                var obj = JsonSerializer.Deserialize<Dictionary<string, string>>(dict["payload"]);
-                var message = string.Empty;
+                key = k;
+            }
+            else
+            {
+                Console.WriteLine("No key found in payload");
+                continue;
+            }
 
-                if (obj == null)
-                {
-                    continue;
-                }
+            var obj = JsonSerializer.Deserialize<Dictionary<string, string>>(dict["payload"]);
 
-                try
+            Stream? message = null;
+
+            if (obj == null)
+            {
+                continue;
+            }
+
+            try
+            {
+                if (obj.TryGetValue("command", out string? command))
                 {
-                    if (obj.TryGetValue("file", out string? file))
+                    if (command == "build" || command == "test")
                     {
-                        message = await ProcessOperation(file, operation);
+                        message = await ProcessOperation(key, command);
                     }
-                    else if (obj.TryGetValue("template", out string? template) && obj.TryGetValue("templateName", out string? templateName))
+                    else if (command == "template")
                     {
+                        var template = obj["template"];
+                        var templateName = obj["templateName"];
                         message = await GenerateTemplate(template, templateName);
                     }
                     else
                     {
+                        Console.WriteLine("Invalid command found in payload");
                         continue;
                     }
                 }
-                catch (Exception ex)
+                else
                 {
-                    message = ex.Message;
+                    Console.WriteLine("No command found in payload");
+                    continue;
                 }
+            }
+            catch (Exception ex)
+            {
+                message = new MemoryStream(Encoding.UTF8.GetBytes(ex.Message));
+            }
 
-                // save to redis key-value store
-                string cacheKey = dict["id"];
-                var cachedResponse = message;
-                var options = new DistributedCacheEntryOptions()
-                    .SetSlidingExpiration(TimeSpan.FromSeconds(cacheExpiry));
-
-                await cacheService.SetCacheDataAsync(cacheKey, cachedResponse, options);
+            if (message != null)
+            {
+                await minioUploader.UploadFileFromStreamAsync(message, key + "_result");
             }
         }
         await Task.Delay(1000);
@@ -101,8 +115,11 @@ var consumerGroupReadTask = Task.Run(async () =>
 
 Dictionary<string, string> ParseResult(StreamEntry entry) => entry.Values.ToDictionary(x => x.Name.ToString(), x => x.Value.ToString());
 
-async Task<string> ProcessOperation(string file, string operation)
+async Task<Stream> ProcessOperation(string key, string operation)
 {
+    // download the file from Minio
+    var file = await minioUploader.DownloadFileAsync(key);
+
     return operation switch
     {
         "build" => await ProcessBuild(file),
@@ -111,7 +128,7 @@ async Task<string> ProcessOperation(string file, string operation)
     };
 }
 
-async Task<string> ProcessBuild(string file)
+async Task<Stream> ProcessBuild(Stream file)
 {
     var (zipPath, tempPath) = await ExtractZipFile(file);
 
@@ -153,9 +170,9 @@ async Task<string> ProcessBuild(string file)
             throw new InvalidOperationException("No dll file found");
         }
 
-        // convert to base64
-        var dllBytes = File.ReadAllBytes(dllFile);
-        return Convert.ToBase64String(dllBytes);
+        // convert to stream
+        var stream = new FileStream(dllFile, FileMode.Open);
+        return stream;
     }
     finally
     {
@@ -163,7 +180,7 @@ async Task<string> ProcessBuild(string file)
     }
 }
 
-async Task<string> ProcessTest(string file)
+async Task<Stream> ProcessTest(Stream file)
 {
     var (zipPath, tempPath) = await ExtractZipFile(file);
 
@@ -194,7 +211,10 @@ async Task<string> ProcessTest(string file)
         process.WaitForExit();
 
         var output = process.StandardOutput.ReadToEnd();
-        return output;
+
+        // convert to stream
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(output));
+        return stream;
     }
     finally
     {
@@ -202,14 +222,18 @@ async Task<string> ProcessTest(string file)
     }
 }
 
-Task<(string, string)> ExtractZipFile(string file)
+Task<(string, string)> ExtractZipFile(Stream file)
 {
     var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-    var fileBytes = Convert.FromBase64String(file);
+
+    // extract the zip from the file
     var zipPath = Path.Combine(tempPath, "extracted");
     // extract the zip file
     Directory.CreateDirectory(tempPath);
-    File.WriteAllBytes(zipPath, fileBytes);
+    using (var fileStream = File.Create(zipPath))
+    {
+        file.CopyTo(fileStream);
+    }
     // extract all nested folders and files
     ZipFile.ExtractToDirectory(zipPath, tempPath);
     // pretty print the folder structure and files, similar to `tree` command
@@ -300,7 +324,7 @@ async Task PopulateNugetCache()
     Console.WriteLine($"Populated nuget cache in {timer.ElapsedMilliseconds}ms");
 }
 
-async Task<string> GenerateTemplate(string template, string templateName)
+async Task<Stream> GenerateTemplate(string template, string templateName)
 {
     try
     {
@@ -332,19 +356,18 @@ async Task<string> GenerateTemplate(string template, string templateName)
         var zipPath = Path.Combine(tempZipPath, "contract.zip");
         ZipFile.CreateFromDirectory(tempPath, zipPath);
 
-        // convert the zip file to base64
-        var zipBytes = await File.ReadAllBytesAsync(zipPath);
-        var zipBase64 = Convert.ToBase64String(zipBytes);
+        // convert the zip file to stream
+        var zipStream = new FileStream(zipPath, FileMode.Open);
 
         // cleanup the temporary directories
         await CleanUp(tempPath);
         await CleanUp(tempZipPath);
 
-        return zipBase64;
+        return zipStream;
     }
     catch (Exception ex)
     {
-        return ex.Message;
+        return new MemoryStream(Encoding.UTF8.GetBytes(ex.Message));
     }
 }
 
