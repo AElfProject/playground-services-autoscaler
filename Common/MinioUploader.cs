@@ -58,7 +58,6 @@ public class MinioUploader
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Error downloading file: " + ex.Message);
             throw; // Rethrow to make sure the caller knows something went wrong
         }
     }

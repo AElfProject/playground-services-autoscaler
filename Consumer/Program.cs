@@ -8,7 +8,7 @@ using System.Text;
 
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
-var operation = Environment.GetEnvironmentVariable("OPERATION") ?? "template";
+var operation = Environment.GetEnvironmentVariable("OPERATION") ?? "build";
 var streamName = Environment.GetEnvironmentVariable("STREAM_NAME") ?? $"{operation}stream";
 var minioBucketName = Environment.GetEnvironmentVariable("MINIO_BUCKET_NAME") ?? "your-bucket-name";
 var minioAccessKey = Environment.GetEnvironmentVariable("MINIO_ACCESS_KEY") ?? "your-access-key";
@@ -170,8 +170,12 @@ async Task<Stream> ProcessBuild(Stream file)
             throw new InvalidOperationException("No dll file found");
         }
 
+        // get base64 encoded string of the dll file
+        var bytes = await File.ReadAllBytesAsync(dllFile);
+        var base64 = Convert.ToBase64String(bytes);
+
         // convert to stream
-        var stream = new FileStream(dllFile, FileMode.Open);
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(base64));
         return stream;
     }
     finally
