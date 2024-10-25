@@ -10,6 +10,7 @@ var buildStreamName = Environment.GetEnvironmentVariable("BUILD_STREAM_NAME") ??
 var testStreamName = Environment.GetEnvironmentVariable("TEST_STREAM_NAME") ?? "teststream";
 var templateStreamName = Environment.GetEnvironmentVariable("TEMPLATE_STREAM_NAME") ?? "templatestream";
 var timeout = int.Parse(Environment.GetEnvironmentVariable("TIMEOUT") ?? "10000");
+var shareCacheExpiry = int.Parse(Environment.GetEnvironmentVariable("SHARE_CACHE_EXPIRY") ?? "300");
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -99,7 +100,7 @@ app.MapPost("/share/create", async (IFormFile file, IRedisCacheService cacheServ
 
     await cacheService.SetCacheDataAsync(id, payload, new DistributedCacheEntryOptions
     {
-        AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
+        AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(shareCacheExpiry)
     });
 
     return id;

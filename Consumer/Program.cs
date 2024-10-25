@@ -10,6 +10,7 @@ var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME"
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
 var operation = Environment.GetEnvironmentVariable("OPERATION") ?? "template";
 var streamName = Environment.GetEnvironmentVariable("STREAM_NAME") ?? $"{operation}stream";
+var cacheExpiry = int.Parse(Environment.GetEnvironmentVariable("CACHE_EXPIRY") ?? "60");
 
 void ConfigureServices(IServiceCollection services)
 {
@@ -89,7 +90,7 @@ var consumerGroupReadTask = Task.Run(async () =>
                 string cacheKey = dict["id"];
                 var cachedResponse = message;
                 var options = new DistributedCacheEntryOptions()
-                    .SetSlidingExpiration(TimeSpan.FromSeconds(60)); // Cache for 60 seconds
+                    .SetSlidingExpiration(TimeSpan.FromSeconds(cacheExpiry));
 
                 await cacheService.SetCacheDataAsync(cacheKey, cachedResponse, options);
             }
