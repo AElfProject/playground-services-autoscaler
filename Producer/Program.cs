@@ -148,7 +148,7 @@ async Task<Stream> SendToRedis(string streamName, string key, string payload)
         }
         catch (Exception)
         {
-            // ignore
+            continue;
         }
 
         await Task.Delay(1000);
