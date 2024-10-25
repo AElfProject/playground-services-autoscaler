@@ -1,12 +1,35 @@
 ﻿using System.Diagnostics;
 using System.IO.Compression;
 using StackExchange.Redis;
+using Common;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Caching.Distributed;
 
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
 var operation = Environment.GetEnvironmentVariable("OPERATION") ?? "build";
 var streamName = Environment.GetEnvironmentVariable("STREAM_NAME") ?? $"{operation}stream";
-var resultStreamName = Environment.GetEnvironmentVariable("RESULT_STREAM_NAME") ?? $"{operation}resultstream";
+
+void ConfigureServices(IServiceCollection services)
+{
+    // Configure Redis
+    services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = redisConnectionString; // Update if your Redis server is different
+    });
+
+    // Add RedisCacheService
+    services.AddScoped<IRedisCacheService, RedisCacheService>();
+}
+
+// Setup dependency injection
+var serviceCollection = new ServiceCollection();
+ConfigureServices(serviceCollection);
+
+var serviceProvider = serviceCollection.BuildServiceProvider();
+
+// Use the RedisCacheService
+var cacheService = serviceProvider.GetRequiredService<IRedisCacheService>();
 
 var redis = ConnectionMultiplexer.Connect(redisConnectionString);
 IDatabase db = redis.GetDatabase();
@@ -34,18 +57,24 @@ var consumerGroupReadTask = Task.Run(async () =>
             if (dict.ContainsKey("file"))
             {
                 var file = dict["file"];
+                var message = string.Empty;
 
                 try
                 {
-                    var message = await ProcessOperation(file, operation);
-
-                    await db.StreamAddAsync(resultStreamName, [new("id", dict["id"]), new("message", message)], "*", 100);
+                    message = await ProcessOperation(file, operation);
                 }
                 catch (Exception ex)
                 {
-                    // problem processing file
-                    await db.StreamAddAsync(resultStreamName, [new("id", dict["id"]), new("error", ex.Message)], "*", 100);
+                    message = ex.Message;
                 }
+
+                // save to redis key-value store
+                string cacheKey = dict["id"];
+                var cachedResponse = message;
+                var options = new DistributedCacheEntryOptions()
+                    .SetSlidingExpiration(TimeSpan.FromSeconds(60)); // Cache for 60 seconds
+
+                await cacheService.SetCacheDataAsync(cacheKey, cachedResponse, options);
             }
         }
         await Task.Delay(1000);
@@ -210,7 +239,6 @@ static void PrintDirectoryTree(string dirPath, string indent, bool isLast)
 async Task Init()
 {
     await InitStream(streamName, consumerGroupName);
-    await InitStream(resultStreamName, consumerGroupName);
 }
 
 async Task InitStream(string streamName, string groupName)

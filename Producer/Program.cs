@@ -1,5 +1,12 @@
 using System.Diagnostics;
+using Common;
 using StackExchange.Redis;
+
+var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
+var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
+var buildStreamName = Environment.GetEnvironmentVariable("BUILD_STREAM_NAME") ?? "buildstream";
+var testStreamName = Environment.GetEnvironmentVariable("TEST_STREAM_NAME") ?? "teststream";
+var timeout = int.Parse(Environment.GetEnvironmentVariable("TIMEOUT") ?? "10000");
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -7,6 +14,15 @@ var builder = WebApplication.CreateBuilder(args);
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+// Configure Redis
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = redisConnectionString; // Update if your Redis server is different
+});
+
+// Register the RedisCacheService from the Common library
+builder.Services.AddScoped<IRedisCacheService, RedisCacheService>();
 
 var app = builder.Build();
 
@@ -16,30 +32,22 @@ app.UseSwaggerUI();
 
 app.UseHttpsRedirection();
 
-var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
-var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
-var buildStreamName = Environment.GetEnvironmentVariable("BUILD_STREAM_NAME") ?? "buildstream";
-var buildResultStreamName = Environment.GetEnvironmentVariable("BUILD_RESULT_STREAM_NAME") ?? "buildresultstream";
-var testStreamName = Environment.GetEnvironmentVariable("TEST_STREAM_NAME") ?? "teststream";
-var testResultStreamName = Environment.GetEnvironmentVariable("TEST_RESULT_STREAM_NAME") ?? "testresultstream";
-var timeout = int.Parse(Environment.GetEnvironmentVariable("TIMEOUT") ?? "10000");
-
 var redis = ConnectionMultiplexer.Connect(redisConnectionString);
 IDatabase db = redis.GetDatabase();
 
 var allResults = new Dictionary<string, string>();
 
 // post formdata file upload to Redis stream
-app.MapPost("/build", async (IFormFile file) =>
+app.MapPost("/build", async (IFormFile file, IRedisCacheService cacheService) =>
 {
-    var result = await SendToRedisAndWatchForResults(buildStreamName, file, buildResultStreamName);
+    var result = await SendToRedisAndWatchForResults(buildStreamName, file, cacheService);
     return Results.Ok(result);
 })
 .DisableAntiforgery();
 
-app.MapPost("/test", async (IFormFile file) =>
+app.MapPost("/test", async (IFormFile file, IRedisCacheService cacheService) =>
 {
-    var result = await SendToRedisAndWatchForResults(testStreamName, file, testResultStreamName);
+    var result = await SendToRedisAndWatchForResults(testStreamName, file, cacheService);
     return Results.Ok(result);
 })
 .DisableAntiforgery();
@@ -47,7 +55,7 @@ app.MapPost("/test", async (IFormFile file) =>
 app.Run();
 
 // reusable code for the above two endpoints
-async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile file, string resultStreamName)
+async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile file, IRedisCacheService cacheService)
 {
     await Init();
 
@@ -79,54 +87,25 @@ async Task<string> SendToRedisAndWatchForResults(string streamName, IFormFile fi
 
     while (timer.ElapsedMilliseconds < timeout)
     {
-        var result = await db.StreamReadGroupAsync(resultStreamName, consumerGroupName, consumer, ">", 1);
-        if (result.Any())
+        var cachedResponse = await cacheService.GetCachedDataAsync<string>(key);
+
+        if (string.IsNullOrEmpty(cachedResponse))
         {
-            var current = result.First();
-            var dict = ParseResult(current);
-
-            await db.StreamAcknowledgeAsync(resultStreamName, consumerGroupName, current.Id);
-
-            try
-            {
-                allResults[key] = dict["message"];
-            }
-            catch (Exception)
-            {
-                try
-                {
-                    allResults[key] = dict["error"];
-                }
-                catch (Exception ex)
-                {
-                    allResults[key] = ex.Message;
-                }
-            }
-
-            // if the message we are looking for is processed, return the result
-            if (allResults.TryGetValue(key, out string? value))
-            {
-                Console.WriteLine($"Message with id {key} processed in {timer.ElapsedMilliseconds}ms");
-                return value;
-            }
+            await Task.Delay(1000);
+            continue;
         }
-        await Task.Delay(1000);
-    }
 
-    // since there is a timeout, acknowledge the original message to avoid reprocessing
-    // await db.StreamAcknowledgeAsync(streamName, consumerGroupName, messageId);
+        Console.WriteLine($"Message with id {key} processed in {timer.ElapsedMilliseconds}ms");
+        return cachedResponse;
+    }
 
     return "Timeout";
 }
 
-Dictionary<string, string> ParseResult(StreamEntry entry) => entry.Values.ToDictionary(x => x.Name.ToString(), x => x.Value.ToString());
-
 async Task Init()
 {
     await InitStream(buildStreamName, consumerGroupName);
-    await InitStream(buildResultStreamName, consumerGroupName);
     await InitStream(testStreamName, consumerGroupName);
-    await InitStream(testResultStreamName, consumerGroupName);
 }
 
 async Task InitStream(string streamName, string groupName)
