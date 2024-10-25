@@ -4,10 +4,11 @@ using StackExchange.Redis;
 using Common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Caching.Distributed;
+using System.Text.Json;
 
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
-var operation = Environment.GetEnvironmentVariable("OPERATION") ?? "build";
+var operation = Environment.GetEnvironmentVariable("OPERATION") ?? "template";
 var streamName = Environment.GetEnvironmentVariable("STREAM_NAME") ?? $"{operation}stream";
 
 void ConfigureServices(IServiceCollection services)
@@ -54,14 +55,30 @@ var consumerGroupReadTask = Task.Run(async () =>
             id = result.FirstOrDefault().Id.ToString() ?? string.Empty;
             var dict = ParseResult(result.First());
 
-            if (dict.ContainsKey("file"))
+            if (dict.ContainsKey("payload"))
             {
-                var file = dict["file"];
+                var obj = JsonSerializer.Deserialize<Dictionary<string, string>>(dict["payload"]);
                 var message = string.Empty;
+
+                if (obj == null)
+                {
+                    continue;
+                }
 
                 try
                 {
-                    message = await ProcessOperation(file, operation);
+                    if (obj.TryGetValue("file", out string? file))
+                    {
+                        message = await ProcessOperation(file, operation);
+                    }
+                    else if (obj.TryGetValue("template", out string? template) && obj.TryGetValue("templateName", out string? templateName))
+                    {
+                        message = await GenerateTemplate(template, templateName);
+                    }
+                    else
+                    {
+                        continue;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -280,6 +297,54 @@ async Task PopulateNugetCache()
     PrintDirectoryTree(nugetCache, "", true);
 
     Console.WriteLine($"Populated nuget cache in {timer.ElapsedMilliseconds}ms");
+}
+
+async Task<string> GenerateTemplate(string template, string templateName)
+{
+    try
+    {
+        // run dotnet new aelf -n HelloWorld in a temporary directory
+        var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempPath);
+
+        // start the process in the temporary directory
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = $"new {template} -n {templateName}",
+                WorkingDirectory = tempPath,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+        process.Start();
+        await process.WaitForExitAsync();
+
+        Console.WriteLine($"Generated template {template} with name {templateName}");
+
+        // zip the contents of the temporary directory
+        var tempZipPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempZipPath);
+        var zipPath = Path.Combine(tempZipPath, "contract.zip");
+        ZipFile.CreateFromDirectory(tempPath, zipPath);
+
+        // convert the zip file to base64
+        var zipBytes = await File.ReadAllBytesAsync(zipPath);
+        var zipBase64 = Convert.ToBase64String(zipBytes);
+
+        // cleanup the temporary directories
+        await CleanUp(tempPath);
+        await CleanUp(tempZipPath);
+
+        return zipBase64;
+    }
+    catch (Exception ex)
+    {
+        return ex.Message;
+    }
 }
 
 await PopulateNugetCache();
