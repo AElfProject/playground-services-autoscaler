@@ -138,11 +138,19 @@ async Task<Stream> SendToRedis(string streamName, string key, string payload)
     // check the key from minio
     while (sw.ElapsedMilliseconds < timeout)
     {
-        var stream = await minioUploader.DownloadFileAsync(key + "_result");
-        if (stream != null)
+        try
         {
-            return stream;
+            var stream = await minioUploader.DownloadFileAsync(key + "_result");
+            if (stream != null)
+            {
+                return stream;
+            }
         }
+        catch (Exception)
+        {
+            // ignore
+        }
+
         await Task.Delay(1000);
     }
 
