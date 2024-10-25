@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Common;
+using Microsoft.Extensions.Caching.Distributed;
 using StackExchange.Redis;
 
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
@@ -68,6 +69,42 @@ app.MapGet("/template", async (string template, string templateName, IRedisCache
     var result = await SendToRedisAndWatchForResults(templateStreamName, key, payload, cacheService);
     return Results.Ok(result);
 });
+
+app.MapGet("/share/get", async (string id, IRedisCacheService cacheService) =>
+{
+    var result = await cacheService.GetCachedDataAsync<string>(id);
+
+    // if no result, return not found
+    if (string.IsNullOrEmpty(result))
+    {
+        return Results.NotFound();
+    }
+
+    var obj = JsonSerializer.Deserialize<Dictionary<string, string>>(result);
+
+    if (obj == null)
+    {
+        return Results.NotFound();
+    }
+
+    var file = Convert.FromBase64String(obj["file"]);
+    return Results.File(new MemoryStream(file), "application/octet-stream", "contract.zip");
+});
+
+app.MapPost("/share/create", async (IFormFile file, IRedisCacheService cacheService) =>
+{
+    var id = Guid.NewGuid().ToString();
+
+    var payload = await PrepareFile(file);
+
+    await cacheService.SetCacheDataAsync(id, payload, new DistributedCacheEntryOptions
+    {
+        AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
+    });
+
+    return id;
+})
+.DisableAntiforgery();
 
 app.Run();
 
