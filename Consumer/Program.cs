@@ -8,8 +8,7 @@ using System.Text;
 
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
-var operation = Environment.GetEnvironmentVariable("OPERATION") ?? "build";
-var streamName = Environment.GetEnvironmentVariable("STREAM_NAME") ?? $"{operation}stream";
+var streamName = Environment.GetEnvironmentVariable("STREAM_NAME") ?? $"buildstream";
 var minioBucketName = Environment.GetEnvironmentVariable("MINIO_BUCKET_NAME") ?? "your-bucket-name";
 var minioAccessKey = Environment.GetEnvironmentVariable("MINIO_ACCESS_KEY") ?? "your-access-key";
 var minioSecretKey = Environment.GetEnvironmentVariable("MINIO_SECRET_KEY") ?? "your-secret-key";
@@ -18,7 +17,7 @@ var minioServiceURL = Environment.GetEnvironmentVariable("MINIO_SERVICE_URL") ??
 void ConfigureServices(IServiceCollection services)
 {
     // Add MinioUploader
-    services.AddSingleton<MinioUploader>(provider =>
+    services.AddSingleton(provider =>
         new MinioUploader(minioBucketName, minioAccessKey, minioSecretKey, minioServiceURL));
 }
 
@@ -38,7 +37,7 @@ var consumerName = Guid.NewGuid().ToString();
 
 var consumerGroupReadTask = Task.Run(async () =>
 {
-    Console.WriteLine($"Starting consumer {consumerName} for {operation} stream");
+    Console.WriteLine($"Starting consumer {consumerName}");
     string id = string.Empty;
     while (true)
     {
@@ -107,6 +106,12 @@ var consumerGroupReadTask = Task.Run(async () =>
             if (message != null)
             {
                 await minioUploader.UploadFileFromStreamAsync(message, key + "_result");
+
+                // send the result to the result stream
+                await db.StreamAddAsync($"{streamName}_result",
+                [
+                    new("key", key),
+                ]);
             }
         }
         await Task.Delay(1000);

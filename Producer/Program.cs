@@ -7,8 +7,6 @@ using StackExchange.Redis;
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
 var buildStreamName = Environment.GetEnvironmentVariable("BUILD_STREAM_NAME") ?? "buildstream";
-var testStreamName = Environment.GetEnvironmentVariable("TEST_STREAM_NAME") ?? "teststream";
-var templateStreamName = Environment.GetEnvironmentVariable("TEMPLATE_STREAM_NAME") ?? "templatestream";
 var timeout = int.Parse(Environment.GetEnvironmentVariable("TIMEOUT") ?? "10000");
 var minioBucketName = Environment.GetEnvironmentVariable("MINIO_BUCKET_NAME") ?? "your-bucket-name";
 var minioAccessKey = Environment.GetEnvironmentVariable("MINIO_ACCESS_KEY") ?? "your-access-key";
@@ -65,7 +63,7 @@ app.MapPost("/test", async (IFormFile file, MinioUploader minioUploader) =>
         var key = Guid.NewGuid().ToString();
         await minioUploader.UploadFileFromIFormFileAsync(file, key);
         var payload = JsonSerializer.Serialize(new { command = "test" });
-        var result = await SendToRedis(testStreamName, key, payload);
+        var result = await SendToRedis(buildStreamName, key, payload);
 
         using var reader = new StreamReader(result, Encoding.UTF8);
         var content = await reader.ReadToEndAsync();
@@ -88,7 +86,7 @@ app.MapGet("/template", async (string template, string templateName) =>
 {
     var payload = JsonSerializer.Serialize(new { command = "template", template, templateName });
     var key = $"{template}-{templateName}";
-    var result = await SendToRedis(templateStreamName, key, payload);
+    var result = await SendToRedis(buildStreamName, key, payload);
 
     return Results.File(result, "application/octet-stream", key + ".zip");
 });
@@ -128,6 +126,8 @@ app.MapPost("/share/create", async (IFormFile file, MinioUploader minioUploader)
 
 app.Run();
 
+Dictionary<string, string> ParseResult(StreamEntry entry) => entry.Values.ToDictionary(x => x.Name.ToString(), x => x.Value.ToString());
+
 async Task<Stream> SendToRedis(string streamName, string key, string payload)
 {
     await Init();
@@ -140,25 +140,41 @@ async Task<Stream> SendToRedis(string streamName, string key, string payload)
 
     // check minio for the result
     var sw = Stopwatch.StartNew();
+    // position is the message id, it should be greater than the current datetime
+    var position = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
 
-    // get minio required service
-    var minioUploader = app.Services.GetRequiredService<MinioUploader>();
-    // check the key from minio
+    // consume the result from the stream
     while (sw.ElapsedMilliseconds < timeout)
     {
-        try
+        var result = await db.StreamReadAsync(streamName + "_result", position, 1);
+        if (result.Length > 0)
         {
-            var stream = await minioUploader.DownloadFileAsync(key + "_result");
-            if (stream != null)
+            var dict = ParseResult(result.First());
+            if (dict.TryGetValue("key", out var k))
             {
-                return stream;
+                if (k == key)
+                {
+                    var minioUploader = app.Services.GetRequiredService<MinioUploader>();
+                    var stream = await minioUploader.DownloadFileAsync(key + "_result");
+                    if (stream != null)
+                    {
+                        return stream;
+                    }
+                }
+                else
+                {
+                    // Key mismatch, continue
+                    continue;
+                }
             }
+            else
+            {
+                // No key found, continue
+                continue;
+            }
+
         }
-        catch (Exception)
-        {
-            await Task.Delay(1000);
-            continue;
-        }
+        await Task.Delay(1000);
     }
 
     // create a timeout response
@@ -168,8 +184,6 @@ async Task<Stream> SendToRedis(string streamName, string key, string payload)
 async Task Init()
 {
     await InitStream(buildStreamName, consumerGroupName);
-    await InitStream(testStreamName, consumerGroupName);
-    await InitStream(templateStreamName, consumerGroupName);
 }
 
 async Task InitStream(string streamName, string groupName)
