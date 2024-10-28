@@ -37,86 +37,83 @@ public class ConsumerService : BackgroundService
         _logger.LogInformation("Consumer Background Service is starting.");
         await Init();
 
+        _logger.LogInformation("Consumer Background Service is doing background work.");
+
+        _logger.LogInformation($"Consumer {_consumerName} is listening to stream {_streamName}");
+
         while (!stoppingToken.IsCancellationRequested)
         {
-            _logger.LogInformation("Consumer Background Service is doing background work.");
-
-            _logger.LogInformation($"Consumer {_consumerName} is listening to stream {_streamName}");
-
-            while (!stoppingToken.IsCancellationRequested)
+            if (!string.IsNullOrEmpty(_id))
             {
-                if (!string.IsNullOrEmpty(_id))
+                await _db.StreamAcknowledgeAsync(_streamName, _consumerGroupName, _id);
+                _id = string.Empty;
+            }
+
+            var result = await _db.StreamReadGroupAsync(_streamName, _consumerGroupName, _consumerName, ">", 1);
+
+            if (result.Length != 0)
+            {
+                _id = result.FirstOrDefault().Id.ToString() ?? string.Empty;
+                var dict = ParseResult(result.First());
+                string? key;
+                if (dict.TryGetValue("key", out var k))
                 {
-                    await _db.StreamAcknowledgeAsync(_streamName, _consumerGroupName, _id);
-                    _id = string.Empty;
+                    key = k;
+                }
+                else
+                {
+                    _logger.LogInformation("No key found in payload");
+                    continue;
                 }
 
-                var result = await _db.StreamReadGroupAsync(_streamName, _consumerGroupName, _consumerName, ">", 1);
+                var obj = JsonSerializer.Deserialize<Dictionary<string, string>>(dict["payload"]);
 
-                if (result.Length != 0)
+                Stream? message;
+
+                if (obj == null)
                 {
-                    _id = result.FirstOrDefault().Id.ToString() ?? string.Empty;
-                    var dict = ParseResult(result.First());
-                    string? key;
-                    if (dict.TryGetValue("key", out var k))
-                    {
-                        key = k;
-                    }
-                    else
-                    {
-                        _logger.LogInformation("No key found in payload");
-                        continue;
-                    }
+                    continue;
+                }
 
-                    var obj = JsonSerializer.Deserialize<Dictionary<string, string>>(dict["payload"]);
-
-                    Stream? message;
-
-                    if (obj == null)
+                try
+                {
+                    if (obj.TryGetValue("command", out string? command))
                     {
-                        continue;
-                    }
-
-                    try
-                    {
-                        if (obj.TryGetValue("command", out string? command))
+                        if (command == "build" || command == "test")
                         {
-                            if (command == "build" || command == "test")
-                            {
-                                message = await ProcessOperation(key, command);
-                            }
-                            else
-                            {
-                                _logger.LogInformation("Invalid command found in payload");
-                                continue;
-                            }
+                            message = await ProcessOperation(key, command);
                         }
                         else
                         {
-                            _logger.LogInformation("No command found in payload");
+                            _logger.LogInformation("Invalid command found in payload");
                             continue;
                         }
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        message = new MemoryStream(Encoding.UTF8.GetBytes(ex.Message));
-                    }
-
-                    if (message != null)
-                    {
-                        await _minioUploader.UploadFileFromStreamAsync(message, key + "_result");
-
-                        // send the result to the result stream
-                        await _db.StreamAddAsync($"{_streamName}_result",
-                        [
-                            new("key", key),
-                ]);
+                        _logger.LogInformation("No command found in payload");
+                        continue;
                     }
                 }
-            }
+                catch (Exception ex)
+                {
+                    message = new MemoryStream(Encoding.UTF8.GetBytes(ex.Message));
+                }
 
-            _logger.LogInformation("Template Background Service is stopping.");
+                if (message != null)
+                {
+                    await _minioUploader.UploadFileFromStreamAsync(message, key + "_result");
+
+                    // send the result to the result stream
+                    await _db.StreamAddAsync($"{_streamName}_result",
+                    [
+                        new("key", key),
+                        ]);
+                }
+            }
         }
+
+        _logger.LogInformation("Template Background Service is stopping.");
     }
 
     private static Dictionary<string, string> ParseResult(StreamEntry entry) => entry.Values.ToDictionary(x => x.Name.ToString(), x => x.Value.ToString());
