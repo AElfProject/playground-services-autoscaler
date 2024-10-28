@@ -77,18 +77,28 @@ app.MapPost("/test", async (IFormFile file, MinioUploader minioUploader) =>
 })
 .DisableAntiforgery();
 
-app.MapGet("/templates", () =>
+app.MapGet("/templates", (MinioUploader minioUploader) =>
 {
-    return new List<string> { "aelf", "aelf-lottery", "aelf-nft-sale", "aelf-simple-dao" };
+    // download the templates.txt file from minio
+    var stream = minioUploader.DownloadFileAsync("contract/templates.txt").Result;
+    using var reader = new StreamReader(stream, Encoding.UTF8);
+    var content = reader.ReadToEnd();
+    // split the content by new line
+    var templates = content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+    return Results.Ok(templates);
 });
 
-app.MapGet("/template", async (string template, string templateName) =>
+app.MapGet("/template", async (string template, MinioUploader minioUploader) =>
 {
-    var payload = JsonSerializer.Serialize(new { command = "template", template, templateName });
-    var key = $"{template}-{templateName}";
-    var result = await SendToRedis(buildStreamName, key, payload);
+    if (string.IsNullOrWhiteSpace(template))
+    {
+        return Results.BadRequest("Template name is required.");
+    }
 
-    return Results.File(result, "application/octet-stream", key + ".zip");
+    // get template from minio
+    var result = await minioUploader.DownloadFileAsync($"contract/{template}.zip");
+
+    return Results.File(result, "application/octet-stream", template + ".zip");
 });
 
 app.MapGet("/share/get", async (string key, MinioUploader minioUploader) =>
