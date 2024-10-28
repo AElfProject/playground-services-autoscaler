@@ -89,7 +89,7 @@ jobs:
             await github.rest.actions.createWorkflowDispatch({
               owner: 'poc-aaa',
               repo: 'devops',
-              workflow_id: 'playground-autoscaler-deploy.yaml',
+              workflow_id: 'redis-job-runner.yaml',
               ref: 'main',
               inputs: {
                 env: 'development',
