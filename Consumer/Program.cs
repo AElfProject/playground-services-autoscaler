@@ -14,7 +14,6 @@ using IHost host = Host.CreateDefaultBuilder(args)
     {
         services.AddSingleton(provider => new MinioUploader(minioBucketName, minioAccessKey, minioSecretKey, minioServiceURL));
         services.AddHostedService<ConsumerService>();
-        services.AddHostedService<TemplateService>();
     })
     .ConfigureLogging(logging =>
     {
