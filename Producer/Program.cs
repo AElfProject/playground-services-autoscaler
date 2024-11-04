@@ -156,33 +156,11 @@ async Task<Stream> SendToRedis(string streamName, string key, string payload)
     // consume the result from the stream
     while (sw.ElapsedMilliseconds < timeout)
     {
-        var result = await db.StreamReadAsync(streamName + "_result", position, 1);
-        if (result.Length > 0)
+        var minioUploader = app.Services.GetRequiredService<MinioUploader>();
+        var stream = await minioUploader.DownloadFileAsync(key + "_result");
+        if (stream != null)
         {
-            var dict = ParseResult(result.First());
-            if (dict.TryGetValue("key", out var k))
-            {
-                if (k == key)
-                {
-                    var minioUploader = app.Services.GetRequiredService<MinioUploader>();
-                    var stream = await minioUploader.DownloadFileAsync(key + "_result");
-                    if (stream != null)
-                    {
-                        return stream;
-                    }
-                }
-                else
-                {
-                    // Key mismatch, continue
-                    continue;
-                }
-            }
-            else
-            {
-                // No key found, continue
-                continue;
-            }
-
+            return stream;
         }
         await Task.Delay(1000);
     }

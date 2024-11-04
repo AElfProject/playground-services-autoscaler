@@ -103,9 +103,6 @@ public class ConsumerService : BackgroundService
                 if (message != null)
                 {
                     await _minioUploader.UploadFileFromStreamAsync(message, key + "_result");
-
-                    // send the result to the result stream
-                    await _db.StreamAddAsync($"{_streamName}_result", [new("key", key)]);
                 }
             }
         }
