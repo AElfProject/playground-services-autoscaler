@@ -157,12 +157,19 @@ async Task<Stream> SendToRedis(string streamName, string key, string payload)
     while (sw.ElapsedMilliseconds < timeout)
     {
         var minioUploader = app.Services.GetRequiredService<MinioUploader>();
-        var stream = await minioUploader.DownloadFileAsync(key + "_result");
-        if (stream != null)
+        try
         {
-            return stream;
+            var stream = await minioUploader.DownloadFileAsync(key + "_result");
+            if (stream != null)
+            {
+                return stream;
+            }
         }
-        await Task.Delay(1000);
+        catch (Exception)
+        {
+            await Task.Delay(1000);
+            continue;
+        }
     }
 
     // create a timeout response
