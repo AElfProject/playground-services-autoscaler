@@ -162,6 +162,7 @@ async Task<Stream> SendToRedis(string streamName, string key, string payload)
             var stream = await minioUploader.DownloadFileAsync(key + "_result");
             if (stream != null)
             {
+                Console.WriteLine($"Result for {key} received in {sw.ElapsedMilliseconds}ms");
                 return stream;
             }
         }
