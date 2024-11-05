@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Common;
 using StackExchange.Redis;
+using nClam;
 
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
@@ -12,6 +13,7 @@ var minioBucketName = Environment.GetEnvironmentVariable("MINIO_BUCKET_NAME") ??
 var minioAccessKey = Environment.GetEnvironmentVariable("MINIO_ACCESS_KEY") ?? "your-access-key";
 var minioSecretKey = Environment.GetEnvironmentVariable("MINIO_SECRET_KEY") ?? "your-secret-key";
 var minioServiceURL = Environment.GetEnvironmentVariable("MINIO_SERVICE_URL") ?? "http://localhost:9000";
+var clamHost = Environment.GetEnvironmentVariable("CLAM_HOST") ?? "localhost";
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,6 +35,8 @@ app.UseHttpsRedirection();
 
 var redis = ConnectionMultiplexer.Connect(redisConnectionString);
 IDatabase db = redis.GetDatabase();
+
+var clam = new ClamClient(clamHost);
 
 // post formdata file upload to Redis stream
 app.MapPost("/build", async (IFormFile file, MinioUploader minioUploader) =>
@@ -124,8 +128,23 @@ app.MapPost("/share/create", async (IFormFile file, MinioUploader minioUploader)
     try
     {
         var key = Guid.NewGuid().ToString();
-        await minioUploader.UploadFileFromIFormFileAsync(file, key);
-        return Results.Ok(key);
+        var scanResult = await clam.SendAndScanFileAsync(file.OpenReadStream());
+
+        switch (scanResult.Result)
+        {
+            case ClamScanResults.Clean:
+                await minioUploader.UploadFileFromIFormFileAsync(file, key);
+                return Results.Ok(key);
+            case ClamScanResults.VirusDetected:
+                Console.WriteLine("Virus Found!");
+                Console.WriteLine("Virus name: {0}", scanResult.InfectedFiles?.FirstOrDefault()?.VirusName);
+                return Results.Problem("Virus detected in the file. Aborting upload.");
+            case ClamScanResults.Error:
+                Console.WriteLine("Error: {0}", scanResult.RawResult);
+                return Results.Problem("An error occurred while scanning the file.");
+        }
+
+        return Results.Problem("An error occurred while scanning the file.");
     }
     catch (Exception ex)
     {
@@ -135,8 +154,6 @@ app.MapPost("/share/create", async (IFormFile file, MinioUploader minioUploader)
 .DisableAntiforgery();
 
 app.Run();
-
-Dictionary<string, string> ParseResult(StreamEntry entry) => entry.Values.ToDictionary(x => x.Name.ToString(), x => x.Value.ToString());
 
 async Task<Stream> SendToRedis(string streamName, string key, string payload)
 {
