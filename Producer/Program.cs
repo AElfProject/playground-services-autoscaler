@@ -51,7 +51,7 @@ app.MapPost("/build", async (IFormFile file, MinioUploader minioUploader) =>
         using var reader = new StreamReader(result, Encoding.UTF8);
         var content = await reader.ReadToEndAsync();
 
-        return Results.Ok(content);
+        return Results.Text(content);
     }
     catch (Exception ex)
     {
@@ -72,7 +72,7 @@ app.MapPost("/test", async (IFormFile file, MinioUploader minioUploader) =>
         using var reader = new StreamReader(result, Encoding.UTF8);
         var content = await reader.ReadToEndAsync();
 
-        return Results.Ok(content);
+        return Results.Text(content);
     }
     catch (Exception ex)
     {
@@ -134,7 +134,7 @@ app.MapPost("/share/create", async (IFormFile file, MinioUploader minioUploader)
         {
             case ClamScanResults.Clean:
                 await minioUploader.UploadFileFromIFormFileAsync(file, key);
-                return Results.Ok(key);
+                return Results.Text(key);
             case ClamScanResults.VirusDetected:
                 Console.WriteLine("Virus Found!");
                 Console.WriteLine("Virus name: {0}", scanResult.InfectedFiles?.FirstOrDefault()?.VirusName);
