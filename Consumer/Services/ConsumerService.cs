@@ -202,7 +202,7 @@ public class ConsumerService : BackgroundService
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = "dotnet",
-                    Arguments = $"test {csprojFile}",
+                    Arguments = $"test {csprojFile} --logger \\\"console;verbosity=detailed\\\"",
                     RedirectStandardOutput = true,
                     UseShellExecute = false,
                     CreateNoWindow = true
