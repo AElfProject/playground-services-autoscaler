@@ -31,8 +31,6 @@ var app = builder.Build();
 app.UseSwagger();
 app.UseSwaggerUI();
 
-app.UseHttpsRedirection();
-
 var redis = ConnectionMultiplexer.Connect(redisConnectionString);
 IDatabase db = redis.GetDatabase();
 
@@ -112,11 +110,9 @@ app.MapGet($"{prefix}/template", async (string template, string projectName) =>
         var payload = JsonSerializer.Serialize(new { command = "template", template, projectName });
         var result = await SendToRedis(buildStreamName, key, payload);
 
+        // result is a zip file, read it and return the content in base64 string
         using var reader = new StreamReader(result, Encoding.UTF8);
         var content = await reader.ReadToEndAsync();
-
-        // conver to base64
-        content = Convert.ToBase64String(Encoding.UTF8.GetBytes(content));
 
         return Results.Text(content);
     }

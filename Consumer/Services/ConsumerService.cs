@@ -239,9 +239,9 @@ public class ConsumerService : BackgroundService
         var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         try
         {
-            // run dotnet new command in temporary folder
-            var id = Guid.NewGuid().ToString();
-            var templatePath = Path.Combine(tempPath, id);
+            var templatePath = Path.Combine(tempPath, "template");
+            Directory.CreateDirectory(templatePath);
+
             var process = new Process
             {
                 StartInfo = new ProcessStartInfo
@@ -257,11 +257,14 @@ public class ConsumerService : BackgroundService
             process.Start();
             process.WaitForExit();
             
-            var zipPath = Path.Combine(tempPath, $"{id}.zip");
+            var zipPath = Path.Combine(tempPath, $"template.zip");
             ZipFile.CreateFromDirectory(templatePath, zipPath);
 
-            // upload the zip file to Minio
-            using var stream = File.OpenRead(zipPath);
+            var file = File.ReadAllBytes(zipPath);
+            var base64 = Convert.ToBase64String(file);
+
+            var stream = new MemoryStream(Encoding.UTF8.GetBytes(base64));
+
             return stream;
         }
         finally
