@@ -324,6 +324,7 @@ public class ConsumerService : BackgroundService
     {
         await InitStream(_streamName, _consumerGroupName);
         await DownloadNugetCache();
+        await InstallDotnetTemplates();
     }
 
     private async Task InitStream(string streamName, string groupName)
@@ -355,6 +356,25 @@ public class ConsumerService : BackgroundService
         CleanUp(tempPath);
 
         _logger.LogInformation("Downloaded Nuget Cache");
+    }
+
+    private async Task InstallDotnetTemplates()
+    {
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = "new --install AElf.ContractTemplates",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+        process.Start();
+        await process.WaitForExitAsync();
+
+        _logger.LogInformation("Installed Dotnet Templates");
     }
 
     private static void CleanUp(string path)
