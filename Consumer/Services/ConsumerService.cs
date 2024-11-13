@@ -255,7 +255,7 @@ public class ConsumerService : BackgroundService
                 }
             };
             process.Start();
-            process.WaitForExit();
+            await process.WaitForExitAsync();
             
             var zipPath = Path.Combine(tempPath, $"template.zip");
             ZipFile.CreateFromDirectory(templatePath, zipPath);
