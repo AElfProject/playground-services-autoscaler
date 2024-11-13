@@ -8,7 +8,7 @@ using nClam;
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
 var buildStreamName = Environment.GetEnvironmentVariable("BUILD_STREAM_NAME") ?? "buildstream";
-var timeout = int.Parse(Environment.GetEnvironmentVariable("TIMEOUT") ?? "10000");
+var timeout = int.Parse(Environment.GetEnvironmentVariable("TIMEOUT") ?? "180000");
 var minioBucketName = Environment.GetEnvironmentVariable("MINIO_BUCKET_NAME") ?? "your-bucket-name";
 var minioAccessKey = Environment.GetEnvironmentVariable("MINIO_ACCESS_KEY") ?? "your-access-key";
 var minioSecretKey = Environment.GetEnvironmentVariable("MINIO_SECRET_KEY") ?? "your-secret-key";
@@ -38,13 +38,15 @@ IDatabase db = redis.GetDatabase();
 
 var clam = new ClamClient(clamHost);
 
+string prefix = "/playground";
+
 // post formdata file upload to Redis stream
-app.MapPost("/build", async (IFormFile file, MinioUploader minioUploader) =>
+app.MapPost($"{prefix}/build", async (IFormFile contractFiles, MinioUploader minioUploader) =>
 {
     try
     {
         var key = Guid.NewGuid().ToString();
-        await minioUploader.UploadFileFromIFormFileAsync(file, key);
+        await minioUploader.UploadFileFromIFormFileAsync(contractFiles, key);
         var payload = JsonSerializer.Serialize(new { command = "build" });
         var result = await SendToRedis(buildStreamName, key, payload);
 
@@ -60,12 +62,12 @@ app.MapPost("/build", async (IFormFile file, MinioUploader minioUploader) =>
 })
 .DisableAntiforgery();
 
-app.MapPost("/test", async (IFormFile file, MinioUploader minioUploader) =>
+app.MapPost($"{prefix}/test", async (IFormFile contractFiles, MinioUploader minioUploader) =>
 {
     try
     {
         var key = Guid.NewGuid().ToString();
-        await minioUploader.UploadFileFromIFormFileAsync(file, key);
+        await minioUploader.UploadFileFromIFormFileAsync(contractFiles, key);
         var payload = JsonSerializer.Serialize(new { command = "test" });
         var result = await SendToRedis(buildStreamName, key, payload);
 
@@ -81,7 +83,7 @@ app.MapPost("/test", async (IFormFile file, MinioUploader minioUploader) =>
 })
 .DisableAntiforgery();
 
-app.MapGet("/templates", (MinioUploader minioUploader) =>
+app.MapGet($"{prefix}/templates", (MinioUploader minioUploader) =>
 {
     // download the templates.txt file from minio
     var stream = minioUploader.DownloadFileAsync("contract/templates.txt").Result;
@@ -92,30 +94,31 @@ app.MapGet("/templates", (MinioUploader minioUploader) =>
     return Results.Ok(templates);
 });
 
-app.MapGet("/template", async (string template, MinioUploader minioUploader) =>
+app.MapGet($"{prefix}/template", async (string template, string projectName) =>
 {
     if (string.IsNullOrWhiteSpace(template))
     {
         return Results.BadRequest("Template name is required.");
     }
 
-    // get template from minio
-    var result = await minioUploader.DownloadFileAsync($"contract/{template}.zip");
-
-    return Results.File(result, "application/octet-stream", template + ".zip");
-});
-
-app.MapGet("/share/get", async (string key, MinioUploader minioUploader) =>
-{
-    if (string.IsNullOrWhiteSpace(key))
+    if (string.IsNullOrWhiteSpace(projectName))
     {
-        return Results.BadRequest("File key is required.");
+        return Results.BadRequest("Project name is required.");
     }
 
     try
     {
-        var stream = await minioUploader.DownloadFileAsync(key);
-        return Results.File(stream, "application/octet-stream", key + ".zip");
+        var key = Guid.NewGuid().ToString();
+        var payload = JsonSerializer.Serialize(new { command = "template", template, projectName });
+        var result = await SendToRedis(buildStreamName, key, payload);
+
+        using var reader = new StreamReader(result, Encoding.UTF8);
+        var content = await reader.ReadToEndAsync();
+
+        // conver to base64
+        content = Convert.ToBase64String(Encoding.UTF8.GetBytes(content));
+
+        return Results.Text(content);
     }
     catch (Exception ex)
     {
@@ -123,7 +126,25 @@ app.MapGet("/share/get", async (string key, MinioUploader minioUploader) =>
     }
 });
 
-app.MapPost("/share/create", async (IFormFile file, MinioUploader minioUploader) =>
+app.MapGet(prefix + "/share/get/{id}", async (string id, MinioUploader minioUploader) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+    {
+        return Results.BadRequest("File ID is required.");
+    }
+
+    try
+    {
+        var stream = await minioUploader.DownloadFileAsync(id);
+        return Results.File(stream, "application/octet-stream", id + ".zip");
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Internal server error: {ex.Message}");
+    }
+});
+
+app.MapPost($"{prefix}/share/create", async (IFormFile file, MinioUploader minioUploader) =>
 {
     try
     {
@@ -134,7 +155,7 @@ app.MapPost("/share/create", async (IFormFile file, MinioUploader minioUploader)
         {
             case ClamScanResults.Clean:
                 await minioUploader.UploadFileFromIFormFileAsync(file, key);
-                return Results.Text(key);
+                return Results.Ok(new {id = key});
             case ClamScanResults.VirusDetected:
                 Console.WriteLine("Virus Found!");
                 Console.WriteLine("Virus name: {0}", scanResult.InfectedFiles?.FirstOrDefault()?.VirusName);

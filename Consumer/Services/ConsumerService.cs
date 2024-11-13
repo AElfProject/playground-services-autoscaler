@@ -83,6 +83,19 @@ public class ConsumerService : BackgroundService
                         {
                             message = await ProcessOperation(key, command);
                         }
+                        else if (command == "template")
+                        {
+                            if (obj.TryGetValue("template", out string? template) &&
+                                obj.TryGetValue("projectName", out string? projectName))
+                            {
+                                message = await ProcessTemplate(template, projectName);
+                            }
+                            else
+                            {
+                                _logger.LogInformation("Invalid template command found in payload");
+                                continue;
+                            }
+                        }
                         else
                         {
                             _logger.LogInformation("Invalid command found in payload");
@@ -106,8 +119,6 @@ public class ConsumerService : BackgroundService
                 }
             }
         }
-
-        _logger.LogInformation("Template Background Service is stopping.");
     }
 
     private static Dictionary<string, string> ParseResult(StreamEntry entry) => entry.Values.ToDictionary(x => x.Name.ToString(), x => x.Value.ToString());
@@ -215,6 +226,42 @@ public class ConsumerService : BackgroundService
 
             // convert to stream
             var stream = new MemoryStream(Encoding.UTF8.GetBytes(output));
+            return stream;
+        }
+        finally
+        {
+            CleanUp(tempPath);
+        }
+    }
+
+    private async Task<Stream> ProcessTemplate(string template, string projectName)
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        try
+        {
+            // run dotnet new command in temporary folder
+            var id = Guid.NewGuid().ToString();
+            var templatePath = Path.Combine(tempPath, id);
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "dotnet",
+                    Arguments = $"new {template} -n {projectName}",
+                    WorkingDirectory = templatePath,
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+            process.Start();
+            process.WaitForExit();
+            
+            var zipPath = Path.Combine(tempPath, $"{id}.zip");
+            ZipFile.CreateFromDirectory(templatePath, zipPath);
+
+            // upload the zip file to Minio
+            using var stream = File.OpenRead(zipPath);
             return stream;
         }
         finally
