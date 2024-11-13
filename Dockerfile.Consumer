@@ -1,11 +1,5 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS base
 
-FROM base AS contract
-WORKDIR /app
-RUN dotnet new install AElf.ContractTemplates
-RUN dotnet new aelf -n HelloWorld -o hello-world
-RUN dotnet restore hello-world/test
-
 FROM base AS build
 WORKDIR /app
 COPY . .
@@ -15,6 +9,5 @@ FROM base AS final
 WORKDIR /app
 COPY --from=mcr.microsoft.com/dotnet/sdk:6.0 /usr/share/dotnet /usr/share/dotnet
 COPY --from=build /app/out .
-COPY --from=contract /root/.nuget/packages /root/.nuget/packages
 ENV DOTNET_CLI_USE_MSBUILD_SERVER=1
 ENTRYPOINT ["dotnet", "Consumer.dll"]
