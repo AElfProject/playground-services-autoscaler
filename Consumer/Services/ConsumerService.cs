@@ -323,6 +323,7 @@ public class ConsumerService : BackgroundService
     private async Task Init()
     {
         await InitStream(_streamName, _consumerGroupName);
+        await DownloadNugetCache();
     }
 
     private async Task InitStream(string streamName, string groupName)
@@ -332,6 +333,28 @@ public class ConsumerService : BackgroundService
         {
             await _db.StreamCreateConsumerGroupAsync(streamName, groupName, "0-0", true);
         }
+    }
+
+    private async Task DownloadNugetCache()
+    {
+        var file = await _minioUploader.DownloadFileAsync("nuget-cache.zip");
+
+        // nuget path
+        var nugetPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget/packages");
+
+        var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempPath);
+
+        using (var fileStream = File.Create(Path.Combine(tempPath, "nuget-cache.zip")))
+        {
+            file.CopyTo(fileStream);
+        }
+
+        ZipFile.ExtractToDirectory(Path.Combine(tempPath, "nuget-cache.zip"), nugetPath);
+
+        CleanUp(tempPath);
+
+        _logger.LogInformation("Downloaded Nuget Cache");
     }
 
     private static void CleanUp(string path)

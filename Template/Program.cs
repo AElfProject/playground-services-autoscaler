@@ -190,6 +190,28 @@ async Task PopulateNugetCache()
     CleanUp(WorkingDirectory);
 }
 
+async Task UploadPackageCache()
+{
+    // get the nuget package cache directory
+    var nugetCache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget/packages");
+
+    // create a zip file of the nuget package cache
+    var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+    Directory.CreateDirectory(tempPath);
+    var zipPath = Path.Combine(tempPath, "nuget-cache.zip");
+    ZipFile.CreateFromDirectory(nugetCache, zipPath);
+
+    // convert the zip file to stream
+    var zipStream = new FileStream(zipPath, FileMode.Open);
+
+    // upload to minio
+    await _minioUploader.UploadFileFromStreamAsync(zipStream, "nuget-cache.zip");
+    _logger.LogInformation("Uploaded Nuget Cache");
+
+    // cleanup the temporary directories
+    CleanUp(tempPath);
+}
+
 static void CleanUp(string path)
 {
     if (Directory.Exists(path))
@@ -200,3 +222,4 @@ static void CleanUp(string path)
 
 await InstallContractTemplates();
 await PopulateNugetCache();
+await UploadPackageCache();
