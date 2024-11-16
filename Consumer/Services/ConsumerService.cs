@@ -172,7 +172,7 @@ public class ConsumerService : BackgroundService
             }
 
             // find the dll file and return it
-            var dllFile = Directory.GetFiles(tempPath, "*.dll", SearchOption.AllDirectories).FirstOrDefault();
+            var dllFile = Directory.GetFiles(tempPath, "*.dll.patched", SearchOption.AllDirectories).FirstOrDefault();
             if (string.IsNullOrEmpty(dllFile))
             {
                 throw new InvalidOperationException("No dll file found");
