@@ -15,13 +15,20 @@ public class MinioUploader
     public MinioUploader(string bucketName, string accessKey, string secretKey, string serviceURL)
     {
         _bucketName = bucketName;
-        var config = new AmazonS3Config
+        if (string.IsNullOrWhiteSpace(serviceURL))
         {
-            ServiceURL = serviceURL,
-            ForcePathStyle = true // Required for MinIO
-        };
+            _s3Client = new AmazonS3Client(accessKey, secretKey);
+        }
+        else
+        {
+            var config = new AmazonS3Config
+            {
+                ServiceURL = serviceURL,
+                ForcePathStyle = true // Required for MinIO
+            };
 
-        _s3Client = new AmazonS3Client(accessKey, secretKey, config);
+            _s3Client = new AmazonS3Client(accessKey, secretKey, config);
+        }
 
         CreateBucketAsync().Wait();
     }
