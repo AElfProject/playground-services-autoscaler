@@ -29,8 +29,6 @@ public class MinioUploader
 
             _s3Client = new AmazonS3Client(accessKey, secretKey, config);
         }
-
-        CreateBucketAsync().Wait();
     }
 
     public async Task UploadFileFromStreamAsync(Stream fileStream, string key)
@@ -65,31 +63,6 @@ public class MinioUploader
         }
         catch (Exception ex)
         {
-            throw; // Rethrow to make sure the caller knows something went wrong
-        }
-    }
-
-    public async Task CreateBucketAsync()
-    {
-        try
-        {
-            // check if bucket exists
-            var listBucketsResponse = await _s3Client.ListBucketsAsync();
-            if (listBucketsResponse.Buckets.Any(b => b.BucketName == _bucketName))
-            {
-                return;
-            }
-
-            var request = new PutBucketRequest
-            {
-                BucketName = _bucketName
-            };
-
-            await _s3Client.PutBucketAsync(request);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Error creating bucket: " + ex.Message);
             throw; // Rethrow to make sure the caller knows something went wrong
         }
     }
