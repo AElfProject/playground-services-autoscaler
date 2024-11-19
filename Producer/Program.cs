@@ -12,7 +12,7 @@ var timeout = int.Parse(Environment.GetEnvironmentVariable("TIMEOUT") ?? "180000
 var minioBucketName = Environment.GetEnvironmentVariable("MINIO_BUCKET_NAME") ?? "your-bucket-name";
 var minioAccessKey = Environment.GetEnvironmentVariable("MINIO_ACCESS_KEY") ?? "your-access-key";
 var minioSecretKey = Environment.GetEnvironmentVariable("MINIO_SECRET_KEY") ?? "your-secret-key";
-var minioServiceURL = Environment.GetEnvironmentVariable("MINIO_SERVICE_URL") ?? "http://localhost:9000";
+var minioServiceURL = Environment.GetEnvironmentVariable("MINIO_SERVICE_URL");
 var clamHost = Environment.GetEnvironmentVariable("CLAM_HOST") ?? "localhost";
 
 var builder = WebApplication.CreateBuilder(args);

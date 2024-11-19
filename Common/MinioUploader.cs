@@ -12,7 +12,7 @@ public class MinioUploader
     private readonly string _bucketName;
     private readonly AmazonS3Client _s3Client;
 
-    public MinioUploader(string bucketName, string accessKey, string secretKey, string serviceURL)
+    public MinioUploader(string bucketName, string accessKey, string secretKey, string? serviceURL)
     {
         _bucketName = bucketName;
         if (string.IsNullOrWhiteSpace(serviceURL))
