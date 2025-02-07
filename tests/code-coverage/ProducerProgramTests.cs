@@ -2,35 +2,46 @@ using System.Text;
 using Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.Extensions.Logging;
 using Moq;
+using Xunit;
 
 namespace code_coverage;
 
 public class ProducerProgramTests
 {
-    private readonly TestMinioUploader _minioUploader;
+    private readonly Mock<IMinioUploader> _minioUploaderMock;
+    private readonly Mock<ILogger> _loggerMock;
 
     public ProducerProgramTests()
     {
-        _minioUploader = new TestMinioUploader();
+        _minioUploaderMock = new Mock<IMinioUploader>();
+        _loggerMock = new Mock<ILogger>();
     }
 
-    [Fact(Skip = "Producer project needs to be refactored to use IMinioUploader")]
+    [Fact]
     public async Task ShareGet_ValidId_ReturnsFile()
     {
         // Arrange
         var id = "test-id";
+        var expectedContent = "test content";
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(expectedContent));
+        
+        _minioUploaderMock.Setup(x => x.DownloadFileAsync(id))
+            .ReturnsAsync(stream);
 
         // Act
-        var result = await _minioUploader.DownloadFileAsync(id);
+        var result = await _minioUploaderMock.Object.DownloadFileAsync(id);
 
         // Assert
         Assert.NotNull(result);
         var content = await new StreamReader(result).ReadToEndAsync();
-        Assert.Equal("test content", content);
+        Assert.Equal(expectedContent, content);
+        
+        _minioUploaderMock.Verify(x => x.DownloadFileAsync(id), Times.Once);
     }
 
-    [Fact(Skip = "Producer project needs to be refactored to use IMinioUploader")]
+    [Fact]
     public async Task ShareCreate_ValidFile_ReturnsOk()
     {
         // Arrange
@@ -39,10 +50,15 @@ public class ProducerProgramTests
         var stream = new MemoryStream(Encoding.UTF8.GetBytes(content));
         mockFile.Setup(f => f.OpenReadStream()).Returns(stream);
         mockFile.Setup(f => f.Length).Returns(stream.Length);
+        var key = "test-key";
+
+        _minioUploaderMock.Setup(x => x.UploadFileFromIFormFileAsync(mockFile.Object, key))
+            .Returns(Task.CompletedTask);
 
         // Act
-        await _minioUploader.UploadFileFromIFormFileAsync(mockFile.Object, "test-key");
+        await _minioUploaderMock.Object.UploadFileFromIFormFileAsync(mockFile.Object, key);
 
-        // Assert - if no exception is thrown, the test passes
+        // Assert
+        _minioUploaderMock.Verify(x => x.UploadFileFromIFormFileAsync(mockFile.Object, key), Times.Once);
     }
 } 

@@ -1,5 +1,6 @@
 using System.Text;
 using Amazon.S3;
+using Amazon.S3.Model;
 using Common;
 using Microsoft.AspNetCore.Http;
 using Moq;
@@ -9,48 +10,35 @@ namespace code_coverage;
 
 public class MinioUploaderTests
 {
-    private readonly string _bucketName = "test-bucket";
-    private readonly string _accessKey = "test-access-key";
-    private readonly string _secretKey = "test-secret-key";
-    private readonly string _serviceUrl = "http://localhost:9000";
+    private readonly TestMinioUploader _uploader;
 
-    [Fact]
-    public void Constructor_WithServiceUrl_CreatesValidInstance()
+    public MinioUploaderTests()
     {
-        // Act
-        var uploader = new MinioUploader(_bucketName, _accessKey, _secretKey, _serviceUrl);
-
-        // Assert
-        Assert.NotNull(uploader);
-    }
-
-    [Fact]
-    public void Constructor_WithoutServiceUrl_CreatesValidInstance()
-    {
-        // Act
-        var uploader = new MinioUploader(_bucketName, _accessKey, _secretKey, null);
-
-        // Assert
-        Assert.NotNull(uploader);
+        _uploader = new TestMinioUploader();
     }
 
     [Fact]
     public async Task UploadFileFromStreamAsync_ValidStream_UploadsSuccessfully()
     {
         // Arrange
-        var uploader = new MinioUploader(_bucketName, _accessKey, _secretKey, _serviceUrl);
-        var stream = new MemoryStream(Encoding.UTF8.GetBytes("test content"));
+        var content = "test content";
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(content));
         var key = "test-key";
 
-        // Act & Assert
-        await uploader.UploadFileFromStreamAsync(stream, key);
+        // Act
+        await _uploader.UploadFileFromStreamAsync(stream, key);
+
+        // Assert
+        var downloadedStream = await _uploader.DownloadFileAsync(key);
+        using var reader = new StreamReader(downloadedStream);
+        var downloadedContent = await reader.ReadToEndAsync();
+        Assert.Equal(content, downloadedContent);
     }
 
     [Fact]
     public async Task UploadFileFromIFormFileAsync_ValidFile_UploadsSuccessfully()
     {
         // Arrange
-        var uploader = new MinioUploader(_bucketName, _accessKey, _secretKey, _serviceUrl);
         var mockFile = new Mock<IFormFile>();
         var content = "test content";
         var stream = new MemoryStream(Encoding.UTF8.GetBytes(content));
@@ -58,34 +46,54 @@ public class MinioUploaderTests
         mockFile.Setup(f => f.Length).Returns(stream.Length);
         var key = "test-key";
 
-        // Act & Assert
-        await uploader.UploadFileFromIFormFileAsync(mockFile.Object, key);
+        // Act
+        await _uploader.UploadFileFromIFormFileAsync(mockFile.Object, key);
+
+        // Assert
+        var downloadedStream = await _uploader.DownloadFileAsync(key);
+        using var reader = new StreamReader(downloadedStream);
+        var downloadedContent = await reader.ReadToEndAsync();
+        Assert.Equal(content, downloadedContent);
     }
 
     [Fact]
     public async Task UploadFileFromIFormFileAsync_EmptyFile_ThrowsException()
     {
         // Arrange
-        var uploader = new MinioUploader(_bucketName, _accessKey, _secretKey, _serviceUrl);
         var mockFile = new Mock<IFormFile>();
         mockFile.Setup(f => f.Length).Returns(0);
         var key = "test-key";
 
         // Act & Assert
-        await Assert.ThrowsAsync<Exception>(() => uploader.UploadFileFromIFormFileAsync(mockFile.Object, key));
+        await Assert.ThrowsAsync<Exception>(() => _uploader.UploadFileFromIFormFileAsync(mockFile.Object, key));
     }
 
     [Fact]
     public async Task DownloadFileAsync_ValidKey_ReturnsStream()
     {
         // Arrange
-        var uploader = new MinioUploader(_bucketName, _accessKey, _secretKey, _serviceUrl);
+        var content = "test content";
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(content));
         var key = "test-key";
+        await _uploader.UploadFileFromStreamAsync(stream, key);
 
         // Act
-        var stream = await uploader.DownloadFileAsync(key);
+        var result = await _uploader.DownloadFileAsync(key);
 
         // Assert
-        Assert.NotNull(stream);
+        Assert.NotNull(result);
+        using var reader = new StreamReader(result);
+        var downloadedContent = await reader.ReadToEndAsync();
+        Assert.Equal(content, downloadedContent);
+    }
+
+    [Fact]
+    public async Task DownloadFileAsync_InvalidKey_ThrowsException()
+    {
+        // Arrange
+        var key = "non-existent-key";
+
+        // Act & Assert
+        await Assert.ThrowsAsync<AmazonS3Exception>(() => _uploader.DownloadFileAsync(key));
     }
 } 

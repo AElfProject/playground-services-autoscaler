@@ -9,16 +9,18 @@ namespace code_coverage;
 
 public class TemplateProgramTests
 {
-    private readonly Mock<Common.IMinioUploader> _minioUploaderMock;
+    private readonly Mock<IMinioUploader> _minioUploaderMock;
     private readonly Mock<ILogger> _loggerMock;
+    private readonly Mock<IProcessWrapper> _processWrapperMock;
 
     public TemplateProgramTests()
     {
-        _minioUploaderMock = new Mock<Common.IMinioUploader>();
+        _minioUploaderMock = new Mock<IMinioUploader>();
         _loggerMock = new Mock<ILogger>();
+        _processWrapperMock = new Mock<IProcessWrapper>();
     }
 
-    [Fact(Skip = "Requires dotnet command and AElf templates to be installed")]
+    [Fact]
     public async Task PopulateNugetCache_ExecutesSuccessfully()
     {
         // Arrange
@@ -27,8 +29,37 @@ public class TemplateProgramTests
 
         try
         {
-            // Act & Assert
-            await PopulateNugetCache(tempPath);
+            // Mock process execution for 'dotnet new aelf'
+            _processWrapperMock.Setup(x => x.StartProcess(
+                It.Is<ProcessStartInfo>(p => 
+                    p.FileName == "dotnet" && 
+                    p.Arguments == "new aelf -n HelloWorld" &&
+                    p.WorkingDirectory == tempPath)))
+                .ReturnsAsync(0);
+
+            // Mock process execution for 'dotnet restore'
+            _processWrapperMock.Setup(x => x.StartProcess(
+                It.Is<ProcessStartInfo>(p => 
+                    p.FileName == "dotnet" && 
+                    p.Arguments == "restore" &&
+                    p.WorkingDirectory == Path.Combine(tempPath, "src"))))
+                .ReturnsAsync(0);
+
+            // Act
+            await PopulateNugetCache(tempPath, _processWrapperMock.Object);
+
+            // Assert
+            _processWrapperMock.Verify(x => x.StartProcess(
+                It.Is<ProcessStartInfo>(p => 
+                    p.FileName == "dotnet" && 
+                    p.Arguments == "new aelf -n HelloWorld")), 
+                Times.Once);
+
+            _processWrapperMock.Verify(x => x.StartProcess(
+                It.Is<ProcessStartInfo>(p => 
+                    p.FileName == "dotnet" && 
+                    p.Arguments == "restore")), 
+                Times.Once);
         }
         finally
         {
@@ -46,68 +77,69 @@ public class TemplateProgramTests
         _minioUploaderMock.Setup(m => m.UploadFileFromStreamAsync(It.IsAny<Stream>(), It.IsAny<string>()))
             .Returns(Task.CompletedTask);
 
-        // Act & Assert
-        await UploadPackageCache();
+        // Act
+        await UploadPackageCache(_minioUploaderMock.Object);
+
+        // Assert
+        _minioUploaderMock.Verify(
+            m => m.UploadFileFromStreamAsync(It.IsAny<Stream>(), "nuget-cache.zip"),
+            Times.Once);
     }
 
-    [Fact(Skip = "Requires dotnet command and AElf templates to be installed")]
+    [Fact]
     public async Task InstallContractTemplates_ExecutesSuccessfully()
     {
         // Arrange
+        var templateOutput = @"Template Name
+---------------------------
+aelf-contract       
+aelf-test          
+";
+        _processWrapperMock.Setup(x => x.StartProcess(
+            It.Is<ProcessStartInfo>(p => 
+                p.FileName == "dotnet" && 
+                p.Arguments == "new --install AElf.ContractTemplates")))
+            .ReturnsAsync(0);
+
+        _processWrapperMock.Setup(x => x.GetProcessOutput())
+            .Returns(templateOutput);
+
         _minioUploaderMock.Setup(m => m.UploadFileFromStreamAsync(It.IsAny<Stream>(), It.IsAny<string>()))
             .Returns(Task.CompletedTask);
 
-        // Act & Assert
-        await InstallContractTemplates();
+        // Act
+        await InstallContractTemplates(_processWrapperMock.Object, _minioUploaderMock.Object);
+
+        // Assert
+        _processWrapperMock.Verify(x => x.StartProcess(
+            It.Is<ProcessStartInfo>(p => 
+                p.FileName == "dotnet" && 
+                p.Arguments == "new --install AElf.ContractTemplates")), 
+            Times.Once);
+
+        _minioUploaderMock.Verify(
+            m => m.UploadFileFromStreamAsync(It.IsAny<Stream>(), "contract/templates.txt"),
+            Times.Once);
     }
 
-    private bool IsDotnetAvailable()
+    private async Task PopulateNugetCache(string workingDirectory, IProcessWrapper processWrapper)
     {
         try
         {
-            using var process = new Process
+            var process = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "dotnet",
-                    Arguments = "--version",
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
+                FileName = "dotnet",
+                Arguments = "new aelf -n HelloWorld",
+                WorkingDirectory = workingDirectory,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
             };
-            process.Start();
-            process.WaitForExit();
-            return process.ExitCode == 0;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private async Task PopulateNugetCache(string workingDirectory)
-    {
-        try
-        {
-            var process = new Process
+            
+            var exitCode = await processWrapper.StartProcess(process);
+            if (exitCode != 0)
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "dotnet",
-                    Arguments = "new aelf -n HelloWorld",
-                    WorkingDirectory = workingDirectory,
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-            process.Start();
-            await process.WaitForExitAsync();
-
-            if (process.ExitCode != 0)
-            {
-                throw new Exception($"Failed to create project. Exit code: {process.ExitCode}");
+                throw new Exception($"Failed to create project. Exit code: {exitCode}");
             }
 
             var srcPath = Path.Combine(workingDirectory, "src");
@@ -116,24 +148,20 @@ public class TemplateProgramTests
                 Directory.CreateDirectory(srcPath);
             }
 
-            process = new Process
+            process = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "dotnet",
-                    Arguments = "restore",
-                    WorkingDirectory = srcPath,
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
+                FileName = "dotnet",
+                Arguments = "restore",
+                WorkingDirectory = srcPath,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
             };
-            process.Start();
-            await process.WaitForExitAsync();
-
-            if (process.ExitCode != 0)
+            
+            exitCode = await processWrapper.StartProcess(process);
+            if (exitCode != 0)
             {
-                throw new Exception($"Failed to restore packages. Exit code: {process.ExitCode}");
+                throw new Exception($"Failed to restore packages. Exit code: {exitCode}");
             }
         }
         catch (Exception ex)
@@ -142,7 +170,7 @@ public class TemplateProgramTests
         }
     }
 
-    private async Task UploadPackageCache()
+    private async Task UploadPackageCache(IMinioUploader minioUploader)
     {
         var nugetCache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget/packages");
         var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
@@ -152,7 +180,7 @@ public class TemplateProgramTests
         {
             var zipPath = Path.Combine(tempPath, "nuget-cache.zip");
             await using var stream = new MemoryStream();
-            await _minioUploaderMock.Object.UploadFileFromStreamAsync(stream, "nuget-cache.zip");
+            await minioUploader.UploadFileFromStreamAsync(stream, "nuget-cache.zip");
         }
         finally
         {
@@ -163,30 +191,26 @@ public class TemplateProgramTests
         }
     }
 
-    private async Task InstallContractTemplates()
+    private async Task InstallContractTemplates(IProcessWrapper processWrapper, IMinioUploader minioUploader)
     {
         try
         {
-            var process = new Process
+            var process = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "dotnet",
-                    Arguments = "new --install AElf.ContractTemplates",
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
+                FileName = "dotnet",
+                Arguments = "new --install AElf.ContractTemplates",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
             };
-            process.Start();
-            await process.WaitForExitAsync();
 
-            if (process.ExitCode != 0)
+            var exitCode = await processWrapper.StartProcess(process);
+            if (exitCode != 0)
             {
-                throw new Exception($"Failed to install templates. Exit code: {process.ExitCode}");
+                throw new Exception($"Failed to install templates. Exit code: {exitCode}");
             }
 
-            var output = await process.StandardOutput.ReadToEndAsync();
+            var output = processWrapper.GetProcessOutput();
             var templates = output
                 .Split("\n")
                 .SkipWhile(line => !line.Contains("Template Name"))
@@ -207,11 +231,17 @@ public class TemplateProgramTests
             }
             await writer.FlushAsync();
             stream.Position = 0;
-            await _minioUploaderMock.Object.UploadFileFromStreamAsync(stream, "contract/templates.txt");
+            await minioUploader.UploadFileFromStreamAsync(stream, "contract/templates.txt");
         }
         catch (Exception ex)
         {
             throw new Exception($"Failed to install contract templates: {ex.Message}", ex);
         }
     }
+}
+
+public interface IProcessWrapper
+{
+    Task<int> StartProcess(ProcessStartInfo processStartInfo);
+    string GetProcessOutput();
 } 
