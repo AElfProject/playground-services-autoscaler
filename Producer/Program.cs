@@ -4,6 +4,7 @@ using System.Text.Json;
 using Common;
 using StackExchange.Redis;
 using nClam;
+using AElf.OpenTelemetry;
 
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
@@ -16,6 +17,10 @@ var minioServiceURL = Environment.GetEnvironmentVariable("MINIO_SERVICE_URL");
 var clamHost = Environment.GetEnvironmentVariable("CLAM_HOST") ?? "localhost";
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Add OpenTelemetry configuration
+builder.Configuration.AddJsonFile("appsettings.json", optional: false);
+builder.Services.AddApplication<OpenTelemetryModule>();
 
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle

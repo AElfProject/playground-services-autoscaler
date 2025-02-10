@@ -4,6 +4,12 @@ using System.Text.RegularExpressions;
 using Common;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
+using System.Text;
+using System.Text.Json;
+using AElf.OpenTelemetry;
+using AElf.OpenTelemetry.ExecutionTime;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 
 var minioBucketName = Environment.GetEnvironmentVariable("MINIO_BUCKET_NAME") ?? "your-bucket-name";
 var minioAccessKey = Environment.GetEnvironmentVariable("MINIO_ACCESS_KEY") ?? "your-access-key";
@@ -12,6 +18,84 @@ var minioServiceURL = Environment.GetEnvironmentVariable("MINIO_SERVICE_URL") ??
 
 var _minioUploader = new MinioUploader(minioBucketName, minioAccessKey, minioSecretKey, minioServiceURL);
 var _logger = LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger("TemplateJob");
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add OpenTelemetry configuration
+builder.Configuration.AddJsonFile("appsettings.json", optional: false);
+builder.Services.AddApplication<OpenTelemetryModule>();
+
+// Add services to the container.
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+// Configure the HTTP request pipeline.
+app.UseSwagger();
+app.UseSwaggerUI();
+
+string prefix = "/playground";
+
+app.MapGet($"{prefix}/template", HandleTemplateRequest);
+
+[AggregateExecutionTime]
+async Task<IResult> HandleTemplateRequest(string template, string projectName, IInstrumentationProvider instrumentationProvider)
+{
+    using var activity = instrumentationProvider.ActivitySource.StartActivity($"Template.HandleTemplateRequest");
+    activity?.SetTag("template", template);
+    activity?.SetTag("projectName", projectName);
+
+    try
+    {
+        // Create a temporary directory
+        var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempPath);
+
+        // Run dotnet new command
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = $"new {template} -n {projectName}",
+                WorkingDirectory = tempPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        process.Start();
+        process.WaitForExit();
+
+        if (process.ExitCode != 0)
+        {
+            var error = process.StandardError.ReadToEnd();
+            activity?.SetStatus(ActivityStatusCode.Error, error);
+            return TypedResults.BadRequest(error);
+        }
+
+        // Zip the project directory
+        var zipPath = Path.Combine(Path.GetTempPath(), $"{projectName}.zip");
+        ZipFile.CreateFromDirectory(Path.Combine(tempPath, projectName), zipPath);
+
+        // Read the zip file and return it
+        var bytes = await File.ReadAllBytesAsync(zipPath);
+
+        // Clean up
+        Directory.Delete(tempPath, true);
+        File.Delete(zipPath);
+
+        return TypedResults.File(bytes, "application/zip", $"{projectName}.zip");
+    }
+    catch (Exception ex)
+    {
+        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        return TypedResults.Problem($"Internal server error: {ex.Message}");
+    }
+}
 
 async Task InstallContractTemplates()
 {

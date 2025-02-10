@@ -6,9 +6,12 @@ using Common;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
+using AElf.OpenTelemetry;
+using AElf.OpenTelemetry.ExecutionTime;
 
 namespace Consumer.Services;
 
+[AggregateExecutionTime]
 public class ConsumerService : BackgroundService
 {
     private readonly ILogger<ConsumerService> _logger;
@@ -18,12 +21,17 @@ public class ConsumerService : BackgroundService
     private readonly string _streamName;
     private readonly IDatabase _db;
     private readonly string _consumerName;
+    private readonly IInstrumentationProvider _instrumentationProvider;
     private string _id;
 
-    public ConsumerService(ILogger<ConsumerService> logger, MinioUploader minioUploader)
+    public ConsumerService(
+        ILogger<ConsumerService> logger, 
+        MinioUploader minioUploader,
+        IInstrumentationProvider instrumentationProvider)
     {
         _logger = logger;
         _minioUploader = minioUploader;
+        _instrumentationProvider = instrumentationProvider;
         _consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
         _redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
         _streamName = Environment.GetEnvironmentVariable("STREAM_NAME") ?? $"buildstream";
@@ -34,15 +42,17 @@ public class ConsumerService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        using var activity = _instrumentationProvider.ActivitySource.StartActivity($"{nameof(ConsumerService)}.{nameof(ExecuteAsync)}");
         _logger.LogInformation("Consumer Background Service is starting.");
         await Init();
 
         _logger.LogInformation("Consumer Background Service is doing background work.");
-
         _logger.LogInformation($"Consumer {_consumerName} is listening to stream {_streamName}");
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            using var processActivity = _instrumentationProvider.ActivitySource.StartActivity($"{nameof(ConsumerService)}.ProcessMessage");
+            
             if (!string.IsNullOrEmpty(_id))
             {
                 await _db.StreamAcknowledgeAsync(_streamName, _consumerGroupName, _id);
@@ -59,6 +69,7 @@ public class ConsumerService : BackgroundService
                 if (dict.TryGetValue("key", out var k))
                 {
                     key = k;
+                    processActivity?.SetTag("message.key", key);
                 }
                 else
                 {
@@ -79,6 +90,8 @@ public class ConsumerService : BackgroundService
                 {
                     if (obj.TryGetValue("command", out string? command))
                     {
+                        processActivity?.SetTag("message.command", command);
+                        
                         if (command == "build" || command == "test")
                         {
                             message = await ProcessOperation(key, command);
@@ -88,6 +101,8 @@ public class ConsumerService : BackgroundService
                             if (obj.TryGetValue("template", out string? template) &&
                                 obj.TryGetValue("projectName", out string? projectName))
                             {
+                                processActivity?.SetTag("message.template", template);
+                                processActivity?.SetTag("message.projectName", projectName);
                                 message = await ProcessTemplate(template, projectName);
                             }
                             else
@@ -110,6 +125,7 @@ public class ConsumerService : BackgroundService
                 }
                 catch (Exception ex)
                 {
+                    processActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
                     message = new MemoryStream(Encoding.UTF8.GetBytes(ex.Message));
                 }
 
@@ -123,8 +139,13 @@ public class ConsumerService : BackgroundService
 
     private static Dictionary<string, string> ParseResult(StreamEntry entry) => entry.Values.ToDictionary(x => x.Name.ToString(), x => x.Value.ToString());
 
+    [AggregateExecutionTime]
     private async Task<Stream> ProcessOperation(string key, string operation)
     {
+        using var activity = _instrumentationProvider.ActivitySource.StartActivity($"{nameof(ConsumerService)}.{nameof(ProcessOperation)}");
+        activity?.SetTag("operation", operation);
+        activity?.SetTag("key", key);
+
         // download the file from Minio
         var file = await _minioUploader.DownloadFileAsync(key);
 
@@ -136,9 +157,13 @@ public class ConsumerService : BackgroundService
         };
     }
 
+    [AggregateExecutionTime]
     private async Task<Stream> ProcessBuild(Stream file)
     {
+        using var activity = _instrumentationProvider.ActivitySource.StartActivity($"{nameof(ConsumerService)}.{nameof(ProcessBuild)}");
+        
         var (zipPath, tempPath) = await ExtractZipFile(file);
+        activity?.SetTag("tempPath", tempPath);
 
         try
         {
@@ -192,9 +217,13 @@ public class ConsumerService : BackgroundService
         }
     }
 
+    [AggregateExecutionTime]
     private async Task<Stream> ProcessTest(Stream file)
     {
+        using var activity = _instrumentationProvider.ActivitySource.StartActivity($"{nameof(ConsumerService)}.{nameof(ProcessTest)}");
+        
         var (zipPath, tempPath) = await ExtractZipFile(file);
+        activity?.SetTag("tempPath", tempPath);
 
         try
         {
@@ -234,8 +263,13 @@ public class ConsumerService : BackgroundService
         }
     }
 
+    [AggregateExecutionTime]
     private async Task<Stream> ProcessTemplate(string template, string projectName)
     {
+        using var activity = _instrumentationProvider.ActivitySource.StartActivity($"{nameof(ConsumerService)}.{nameof(ProcessTemplate)}");
+        activity?.SetTag("template", template);
+        activity?.SetTag("projectName", projectName);
+
         var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         try
         {
