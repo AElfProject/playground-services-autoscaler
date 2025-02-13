@@ -164,6 +164,7 @@ public class ConsumerService : BackgroundService
         
         var (zipPath, tempPath) = await ExtractZipFile(file);
         activity?.SetTag("tempPath", tempPath);
+        activity?.SetTag("zipPath", zipPath);
 
         try
         {
@@ -173,8 +174,13 @@ public class ConsumerService : BackgroundService
 
             if (string.IsNullOrEmpty(csprojFile))
             {
-                throw new InvalidOperationException("No csproj file found");
+                var error = "No csproj file found";
+                activity?.SetStatus(ActivityStatusCode.Error, error);
+                activity?.SetTag("error.message", error);
+                throw new InvalidOperationException(error);
             }
+
+            activity?.SetTag("project.file", csprojFile);
 
             // build the project
             var process = new Process
@@ -189,10 +195,16 @@ public class ConsumerService : BackgroundService
                 }
             };
             process.Start();
+            var output = await process.StandardOutput.ReadToEndAsync();
             process.WaitForExit();
+
+            activity?.SetTag("build.output", output);
+            activity?.SetTag("build.exit_code", process.ExitCode);
+
             if (process.ExitCode != 0)
             {
-                var output = process.StandardOutput.ReadToEnd();
+                activity?.SetStatus(ActivityStatusCode.Error, output);
+                activity?.SetTag("error.message", output);
                 throw new InvalidOperationException(output);
             }
 
@@ -200,16 +212,29 @@ public class ConsumerService : BackgroundService
             var dllFile = Directory.GetFiles(tempPath, "*.dll.patched", SearchOption.AllDirectories).FirstOrDefault();
             if (string.IsNullOrEmpty(dllFile))
             {
-                throw new InvalidOperationException("No dll file found");
+                var error = "No dll file found";
+                activity?.SetStatus(ActivityStatusCode.Error, error);
+                activity?.SetTag("error.message", error);
+                throw new InvalidOperationException(error);
             }
+
+            activity?.SetTag("dll.file", dllFile);
 
             // get base64 encoded string of the dll file
             var bytes = await File.ReadAllBytesAsync(dllFile);
             var base64 = Convert.ToBase64String(bytes);
+            activity?.SetTag("response.size", base64.Length);
 
             // convert to stream
             var stream = new MemoryStream(Encoding.UTF8.GetBytes(base64));
             return stream;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.SetTag("error.message", ex.Message);
+            activity?.SetTag("error.stack_trace", ex.StackTrace);
+            throw;
         }
         finally
         {
@@ -224,6 +249,7 @@ public class ConsumerService : BackgroundService
         
         var (zipPath, tempPath) = await ExtractZipFile(file);
         activity?.SetTag("tempPath", tempPath);
+        activity?.SetTag("zipPath", zipPath);
 
         try
         {
@@ -233,8 +259,13 @@ public class ConsumerService : BackgroundService
 
             if (string.IsNullOrEmpty(csprojFile))
             {
-                throw new InvalidOperationException("No test csproj file found");
+                var error = "No test csproj file found";
+                activity?.SetStatus(ActivityStatusCode.Error, error);
+                activity?.SetTag("error.message", error);
+                throw new InvalidOperationException(error);
             }
+
+            activity?.SetTag("project.file", csprojFile);
 
             // run tests
             var process = new Process
@@ -249,13 +280,23 @@ public class ConsumerService : BackgroundService
                 }
             };
             process.Start();
+            var output = await process.StandardOutput.ReadToEndAsync();
             process.WaitForExit();
 
-            var output = process.StandardOutput.ReadToEnd();
+            activity?.SetTag("test.output", output);
+            activity?.SetTag("test.exit_code", process.ExitCode);
+            activity?.SetTag("response.size", output.Length);
 
             // convert to stream
             var stream = new MemoryStream(Encoding.UTF8.GetBytes(output));
             return stream;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.SetTag("error.message", ex.Message);
+            activity?.SetTag("error.stack_trace", ex.StackTrace);
+            throw;
         }
         finally
         {

@@ -5,6 +5,9 @@ using Common;
 using StackExchange.Redis;
 using nClam;
 using AElf.OpenTelemetry;
+using System.Diagnostics;
+
+const string ServiceName = "Producer";
 
 var consumerGroupName = Environment.GetEnvironmentVariable("CONSUMER_GROUP_NAME") ?? "consumergroup";
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING") ?? "localhost";
@@ -44,125 +47,178 @@ var clam = new ClamClient(clamHost);
 string prefix = "/playground";
 
 // post formdata file upload to Redis stream
-app.MapPost($"{prefix}/build", async (IFormFile contractFiles, MinioUploader minioUploader) =>
+app.MapPost($"{prefix}/build", async (IFormFile contractFiles, MinioUploader minioUploader, IInstrumentationProvider instrumentationProvider) =>
 {
+    using var activity = instrumentationProvider.ActivitySource.StartActivity($"{ServiceName}.Build");
     try
     {
         var key = Guid.NewGuid().ToString();
+        activity?.SetTag("file.key", key);
+        activity?.SetTag("file.name", contractFiles.FileName);
+        activity?.SetTag("file.size", contractFiles.Length);
+
         await minioUploader.UploadFileFromIFormFileAsync(contractFiles, key);
         var payload = JsonSerializer.Serialize(new { command = "build" });
         var result = await SendToRedis(buildStreamName, key, payload);
 
         using var reader = new StreamReader(result, Encoding.UTF8);
         var content = await reader.ReadToEndAsync();
-
+        
+        activity?.SetTag("response.content", content);
         return Results.Text(content);
     }
     catch (Exception ex)
     {
+        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        activity?.SetTag("error.message", ex.Message);
         return Results.Problem($"Internal server error: {ex.Message}");
     }
 })
 .DisableAntiforgery();
 
-app.MapPost($"{prefix}/test", async (IFormFile contractFiles, MinioUploader minioUploader) =>
+app.MapPost($"{prefix}/test", async (IFormFile contractFiles, MinioUploader minioUploader, IInstrumentationProvider instrumentationProvider) =>
 {
+    using var activity = instrumentationProvider.ActivitySource.StartActivity($"{ServiceName}.Test");
     try
     {
         var key = Guid.NewGuid().ToString();
+        activity?.SetTag("file.key", key);
+        activity?.SetTag("file.name", contractFiles.FileName);
+        activity?.SetTag("file.size", contractFiles.Length);
+
         await minioUploader.UploadFileFromIFormFileAsync(contractFiles, key);
         var payload = JsonSerializer.Serialize(new { command = "test" });
         var result = await SendToRedis(buildStreamName, key, payload);
 
         using var reader = new StreamReader(result, Encoding.UTF8);
         var content = await reader.ReadToEndAsync();
-
+        
+        activity?.SetTag("response.content", content);
         return Results.Text(content);
     }
     catch (Exception ex)
     {
+        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        activity?.SetTag("error.message", ex.Message);
         return Results.Problem($"Internal server error: {ex.Message}");
     }
 })
 .DisableAntiforgery();
 
-app.MapGet($"{prefix}/templates", (MinioUploader minioUploader) =>
+app.MapGet($"{prefix}/templates", async (MinioUploader minioUploader, IInstrumentationProvider instrumentationProvider) =>
 {
-    // download the templates.txt file from minio
-    var stream = minioUploader.DownloadFileAsync("contract/templates.txt").Result;
-    using var reader = new StreamReader(stream, Encoding.UTF8);
-    var content = reader.ReadToEnd();
-    // split the content by new line
-    var templates = content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-    return Results.Ok(templates);
+    using var activity = instrumentationProvider.ActivitySource.StartActivity($"{ServiceName}.GetTemplates");
+    try
+    {
+        var stream = await minioUploader.DownloadFileAsync("contract/templates.txt");
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        var content = reader.ReadToEnd();
+        var templates = content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        
+        activity?.SetTag("templates.count", templates.Length);
+        activity?.SetTag("response.templates", string.Join(",", templates));
+        return Results.Ok(templates);
+    }
+    catch (Exception ex)
+    {
+        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        activity?.SetTag("error.message", ex.Message);
+        return Results.Problem($"Internal server error: {ex.Message}");
+    }
 });
 
-app.MapGet($"{prefix}/template", async (string template, string projectName) =>
+app.MapGet($"{prefix}/template", async (string template, string projectName, IInstrumentationProvider instrumentationProvider) =>
 {
+    using var activity = instrumentationProvider.ActivitySource.StartActivity($"{ServiceName}.GetTemplate");
+    activity?.SetTag("template.name", template);
+    activity?.SetTag("project.name", projectName);
+
     if (string.IsNullOrWhiteSpace(template))
     {
+        activity?.SetStatus(ActivityStatusCode.Error, "Template name is required");
         return Results.BadRequest("Template name is required.");
     }
 
     if (string.IsNullOrWhiteSpace(projectName))
     {
+        activity?.SetStatus(ActivityStatusCode.Error, "Project name is required");
         return Results.BadRequest("Project name is required.");
     }
 
     try
     {
         var key = Guid.NewGuid().ToString();
+        activity?.SetTag("request.key", key);
         var payload = JsonSerializer.Serialize(new { command = "template", template, projectName });
         var result = await SendToRedis(buildStreamName, key, payload);
 
-        // result is a zip file, read it and return the content in base64 string
         using var reader = new StreamReader(result, Encoding.UTF8);
         var content = await reader.ReadToEndAsync();
-
+        
+        activity?.SetTag("response.content_length", content.Length);
         return Results.Text(content);
     }
     catch (Exception ex)
     {
+        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        activity?.SetTag("error.message", ex.Message);
         return Results.Problem($"Internal server error: {ex.Message}");
     }
 });
 
-app.MapGet(prefix + "/share/get/{id}", async (string id, MinioUploader minioUploader) =>
+app.MapGet(prefix + "/share/get/{id}", async (string id, MinioUploader minioUploader, IInstrumentationProvider instrumentationProvider) =>
 {
+    using var activity = instrumentationProvider.ActivitySource.StartActivity($"{ServiceName}.GetSharedFile");
+    activity?.SetTag("file.id", id);
+
     if (string.IsNullOrWhiteSpace(id))
     {
+        activity?.SetStatus(ActivityStatusCode.Error, "File ID is required");
         return Results.BadRequest("File ID is required.");
     }
 
     try
     {
         var stream = await minioUploader.DownloadFileAsync(id);
+        activity?.SetTag("response.file_name", id + ".zip");
         return Results.File(stream, "application/octet-stream", id + ".zip");
     }
     catch (Exception ex)
     {
+        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        activity?.SetTag("error.message", ex.Message);
         return Results.Problem($"Internal server error: {ex.Message}");
     }
 });
 
-app.MapPost($"{prefix}/share/create", async (IFormFile file, MinioUploader minioUploader) =>
+app.MapPost($"{prefix}/share/create", async (IFormFile file, MinioUploader minioUploader, IInstrumentationProvider instrumentationProvider) =>
 {
+    using var activity = instrumentationProvider.ActivitySource.StartActivity($"{ServiceName}.CreateShare");
+    activity?.SetTag("file.name", file.FileName);
+    activity?.SetTag("file.size", file.Length);
+
     try
     {
         var key = Guid.NewGuid().ToString();
+        activity?.SetTag("file.key", key);
         var scanResult = await clam.SendAndScanFileAsync(file.OpenReadStream());
 
         switch (scanResult.Result)
         {
             case ClamScanResults.Clean:
                 await minioUploader.UploadFileFromIFormFileAsync(file, key);
+                activity?.SetTag("scan.result", "clean");
                 return Results.Ok(new {id = key});
             case ClamScanResults.VirusDetected:
-                Console.WriteLine("Virus Found!");
-                Console.WriteLine("Virus name: {0}", scanResult.InfectedFiles?.FirstOrDefault()?.VirusName);
+                var virusName = scanResult.InfectedFiles?.FirstOrDefault()?.VirusName;
+                activity?.SetStatus(ActivityStatusCode.Error, $"Virus detected: {virusName}");
+                activity?.SetTag("scan.result", "virus_detected");
+                activity?.SetTag("scan.virus_name", virusName);
                 return Results.Problem("Virus detected in the file. Aborting upload.");
             case ClamScanResults.Error:
-                Console.WriteLine("Error: {0}", scanResult.RawResult);
+                activity?.SetStatus(ActivityStatusCode.Error, scanResult.RawResult);
+                activity?.SetTag("scan.result", "error");
+                activity?.SetTag("scan.error", scanResult.RawResult);
                 return Results.Problem("An error occurred while scanning the file.");
         }
 
@@ -170,6 +226,8 @@ app.MapPost($"{prefix}/share/create", async (IFormFile file, MinioUploader minio
     }
     catch (Exception ex)
     {
+        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        activity?.SetTag("error.message", ex.Message);
         return Results.Problem($"Internal server error: {ex.Message}");
     }
 })

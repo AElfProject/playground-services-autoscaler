@@ -43,14 +43,15 @@ app.MapGet($"{prefix}/template", HandleTemplateRequest);
 async Task<IResult> HandleTemplateRequest(string template, string projectName, IInstrumentationProvider instrumentationProvider)
 {
     using var activity = instrumentationProvider.ActivitySource.StartActivity($"Template.HandleTemplateRequest");
-    activity?.SetTag("template", template);
-    activity?.SetTag("projectName", projectName);
+    activity?.SetTag("template.name", template);
+    activity?.SetTag("project.name", projectName);
 
     try
     {
         // Create a temporary directory
         var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(tempPath);
+        activity?.SetTag("temp.path", tempPath);
 
         // Run dotnet new command
         var process = new Process
@@ -68,21 +69,28 @@ async Task<IResult> HandleTemplateRequest(string template, string projectName, I
         };
 
         process.Start();
+        var output = await process.StandardOutput.ReadToEndAsync();
+        var error = await process.StandardError.ReadToEndAsync();
         process.WaitForExit();
+
+        activity?.SetTag("process.exit_code", process.ExitCode);
+        activity?.SetTag("process.output", output);
 
         if (process.ExitCode != 0)
         {
-            var error = process.StandardError.ReadToEnd();
             activity?.SetStatus(ActivityStatusCode.Error, error);
+            activity?.SetTag("error.message", error);
             return TypedResults.BadRequest(error);
         }
 
         // Zip the project directory
         var zipPath = Path.Combine(Path.GetTempPath(), $"{projectName}.zip");
         ZipFile.CreateFromDirectory(Path.Combine(tempPath, projectName), zipPath);
+        activity?.SetTag("zip.path", zipPath);
 
         // Read the zip file and return it
         var bytes = await File.ReadAllBytesAsync(zipPath);
+        activity?.SetTag("response.size", bytes.Length);
 
         // Clean up
         Directory.Delete(tempPath, true);
@@ -93,6 +101,8 @@ async Task<IResult> HandleTemplateRequest(string template, string projectName, I
     catch (Exception ex)
     {
         activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        activity?.SetTag("error.message", ex.Message);
+        activity?.SetTag("error.stack_trace", ex.StackTrace);
         return TypedResults.Problem($"Internal server error: {ex.Message}");
     }
 }
