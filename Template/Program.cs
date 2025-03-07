@@ -251,7 +251,7 @@ async Task PopulateNugetCache()
         StartInfo = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = "new aelf -n HelloWorld",
+            Arguments = "new aelf-hello-world -n HelloWorld",
             WorkingDirectory = WorkingDirectory,
             RedirectStandardOutput = true,
             UseShellExecute = false,
